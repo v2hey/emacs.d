@@ -69,10 +69,10 @@
 ;;----------------------------------------------------------------------------
 ;; VI emulation and related key mappings
 ;;----------------------------------------------------------------------------
-(setq viper-mode t)
-(require 'viper)
-(define-key viper-insert-global-user-map "\C-n" 'hippie-expand)
-(define-key viper-insert-global-user-map "\C-p" 'hippie-expand)
+;; (setq viper-mode t)
+;; (require 'viper)
+;; (define-key viper-insert-global-user-map "\C-n" 'hippie-expand)
+;; (define-key viper-insert-global-user-map "\C-p" 'hippie-expand)
 
 
 ;;----------------------------------------------------------------------------
