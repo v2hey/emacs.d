@@ -13,3 +13,4 @@ config.py
 .mypy_cache/
 TAGS
 .workon
+auto-save-list/
