@@ -14,9 +14,11 @@
 (in-package :swank-backend)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
+  (require 'asdf)
   (require 'sb-bsd-sockets)
   (require 'sb-introspect)
-  (require 'sb-posix))
+  (require 'sb-posix)
+  (require 'sb-cltl2))
 
 (declaim (optimize (debug 2) (sb-c:insert-step-conditions 0)))
 
@@ -273,6 +275,18 @@
   (check-type f function)
   (sb-impl::%fun-name f))
 
+(defmethod declaration-arglist ((decl-identifier (eql 'optimize)))
+  (flet ((ensure-list (thing) (if (listp thing) thing (list thing))))
+    (let* ((flags (sb-cltl2:declaration-information decl-identifier)))
+      (if flags
+          ;; Symbols aren't printed with package qualifiers, but the FLAGS would
+          ;; have to be fully qualified when used inside a declaration. So we
+          ;; strip those as long as there's no better way. (FIXME)
+          `(&any ,@(remove-if-not #'(lambda (qualifier)
+                                      (find-symbol (symbol-name (first qualifier)) :cl))
+                                  flags :key #'ensure-list))
+          (call-next-method)))))
+
 (defvar *buffer-name* nil)
 (defvar *buffer-offset*)
 (defvar *buffer-substring* nil)
@@ -311,6 +325,11 @@ information."
   (typecase condition
     (sb-int:encapsulated-condition (sb-int:encapsulated-condition condition))
     (t condition)))
+
+(defun condition-references (condition)
+  (if (typep condition 'sb-int:reference-condition)
+      (externalize-reference
+       (sb-int:reference-condition-references condition))))
 
 (defun compiler-note-location (context)
   (if context
@@ -416,7 +435,6 @@ compiler state."
   (concatenate 'string (tmpnam nil) ".lisp"))
 
 (defimplementation swank-compile-string (string &key buffer position directory)
-  (declare (ignore directory))
   (let ((*buffer-name* buffer)
         (*buffer-offset* position)
         (*buffer-substring* string)
@@ -425,6 +443,7 @@ compiler state."
              (with-compilation-hooks ()
                (with-compilation-unit
                    (:source-plist (list :emacs-buffer buffer
+                                        :emacs-directory directory
                                         :emacs-string string
                                         :emacs-position position))
                  (funcall fn (compile-file filename))))))
@@ -480,22 +499,23 @@ This is useful when debugging the definition-finding code.")
                (sb-introspect::definition-source-description source-location))
         (if *debug-definition-finding*
             (make-definition-source-location source-location type name)
-            (handler-case (make-definition-source-location source-location
-                                                           type name)
+            (handler-case
+                (make-definition-source-location source-location type name)
               (error (e)
-                     (list :error (format nil "Error: ~A" e)))))))
+                (list :error (format nil "Error: ~A" e)))))))
 
 (defun make-definition-source-location (definition-source type name)
   (with-struct (sb-introspect::definition-source-
                    pathname form-path character-offset plist
                    file-write-date)
       definition-source
-    (destructuring-bind (&key emacs-buffer emacs-position
+    (destructuring-bind (&key emacs-buffer emacs-position emacs-directory
                               emacs-string &allow-other-keys)
         plist
       (cond
         (emacs-buffer
-         (let* ((pos (if form-path
+         (let* ((*readtable* (guess-readtable-for-filename emacs-directory))
+                (pos (if form-path
                          (with-debootstrapping
                            (source-path-string-position form-path emacs-string))
                          character-offset))
@@ -677,10 +697,25 @@ Return a list of the form (NAME LOCATION)."
 (defimplementation install-debugger-globally (function)
   (setq sb-ext:*invoke-debugger-hook* function))
 
-#+#.(swank-backend::sbcl-with-new-stepper-p)
 (defimplementation condition-extras (condition)
-  (when (typep condition 'sb-impl::step-form-condition)
-    `((:show-frame-source 0))))
+  (cond #+#.(swank-backend::sbcl-with-new-stepper-p)
+        ((typep condition 'sb-impl::step-form-condition)
+         `((:show-frame-source 0)))
+        ((typep condition 'sb-int:reference-condition)
+         (let ((refs (sb-int:reference-condition-references condition)))
+           (if refs
+               `((:references ,(externalize-reference refs))))))))
+
+(defun externalize-reference (ref)
+  (etypecase ref
+    (null nil)
+    (cons (cons (externalize-reference (car ref))
+                (externalize-reference (cdr ref))))
+    ((or string number) ref)
+    (symbol 
+     (cond ((eq (symbol-package ref) (symbol-package :test))
+            ref)
+           (t (symbol-name ref))))))
 
 (defimplementation call-with-debugging-environment (debugger-loop-fn)
   (declare (type function debugger-loop-fn))
@@ -773,7 +808,7 @@ stack."
 (defun fallback-source-location (code-location)
   (let ((fun (code-location-debug-fun-fun code-location)))
     (cond (fun (function-source-location fun))
-          (t (abort-request "Cannot find source location for: ~A " code-location)))))
+          (t (error "Cannot find source location for: ~A " code-location)))))
 
 (defun lisp-source-location (code-location)
   (let ((source (prin1-to-string
@@ -782,7 +817,9 @@ stack."
 
 (defun emacs-buffer-source-location (code-location plist)
   (if (code-location-has-debug-block-info-p code-location)
-      (destructuring-bind (&key emacs-buffer emacs-position emacs-string) plist
+      (destructuring-bind (&key emacs-buffer emacs-position emacs-string
+                                &allow-other-keys)
+          plist
         (let* ((pos (string-source-position code-location emacs-string))
                (snipped (with-input-from-string (s emacs-string)
                           (read-snippet s pos))))
@@ -930,11 +967,6 @@ stack."
   (let ((sb-int:*print-condition-references* nil))
     (princ-to-string condition)))
 
-(defimplementation condition-references (condition)
-  (if (typep condition 'sb-int:reference-condition)
-      (sb-int:reference-condition-references condition)
-      '()))
-
 
 ;;;; Profiling
 
@@ -965,13 +997,12 @@ stack."
 
 ;;;; Inspector
 
-(defclass sbcl-inspector (inspector)
-  ())
+(defclass sbcl-inspector (backend-inspector) ())
 
 (defimplementation make-default-inspector ()
   (make-instance 'sbcl-inspector))
 
-(defmethod inspect-for-emacs ((o t) (inspector sbcl-inspector))
+(defmethod inspect-for-emacs ((o t) (inspector backend-inspector))
   (declare (ignore inspector))
   (cond ((sb-di::indirect-value-cell-p o)
          (values "A value cell." (label-value-line*
@@ -984,7 +1015,7 @@ stack."
                (values text (loop for value in parts  for i from 0
                                   append (label-value-line i value))))))))
 
-(defmethod inspect-for-emacs ((o function) (inspector sbcl-inspector))
+(defmethod inspect-for-emacs ((o function) (inspector backend-inspector))
   (declare (ignore inspector))
   (let ((header (sb-kernel:widetag-of o)))
     (cond ((= header sb-vm:simple-fun-header-widetag)
@@ -1006,7 +1037,7 @@ stack."
                                   i (sb-kernel:%closure-index-ref o i))))))
 	  (t (call-next-method o)))))
 
-(defmethod inspect-for-emacs ((o sb-kernel:code-component) (_ sbcl-inspector))
+(defmethod inspect-for-emacs ((o sb-kernel:code-component) (_ backend-inspector))
   (declare (ignore _))
   (values (format nil "~A is a code data-block." o)
           (append
@@ -1035,13 +1066,13 @@ stack."
                          (ash (sb-kernel:%code-code-size o) sb-vm:word-shift)
                          :stream s))))))))
 
-(defmethod inspect-for-emacs ((o sb-ext:weak-pointer) (inspector sbcl-inspector))
+(defmethod inspect-for-emacs ((o sb-ext:weak-pointer) (inspector backend-inspector))
   (declare (ignore inspector))
   (values "A weak pointer."
           (label-value-line*
            (:value (sb-ext:weak-pointer-value o)))))
 
-(defmethod inspect-for-emacs ((o sb-kernel:fdefn) (inspector sbcl-inspector))
+(defmethod inspect-for-emacs ((o sb-kernel:fdefn) (inspector backend-inspector))
   (declare (ignore inspector))
   (values "A fdefn object."
           (label-value-line*
@@ -1049,7 +1080,7 @@ stack."
            (:function (sb-kernel:fdefn-fun o)))))
 
 (defmethod inspect-for-emacs :around ((o generic-function)
-                                      (inspector sbcl-inspector))
+                                      (inspector backend-inspector))
   (declare (ignore inspector))
   (multiple-value-bind (title contents) (call-next-method)
     (values title
@@ -1190,29 +1221,40 @@ stack."
                                               mutex))))))))
 
 
-;;; Auto-flush streams
+  ;; Auto-flush streams
 
-  ;; XXX race conditions
-  (defvar *auto-flush-streams* '())
+  (defvar *auto-flush-interval* 0.15
+    "How often to flush interactive streams. This valu is passed
+    directly to cl:sleep.")
+
+  (defvar *auto-flush-lock* (make-recursive-lock :name "auto flush"))
 
   (defvar *auto-flush-thread* nil)
 
+  (defvar *auto-flush-streams* '())
+  
   (defimplementation make-stream-interactive (stream)
-    (setq *auto-flush-streams* (adjoin stream *auto-flush-streams*))
-    (unless *auto-flush-thread*
-      (setq *auto-flush-thread*
-            (sb-thread:make-thread #'flush-streams
-                                   :name "auto-flush-thread"))))
+    (call-with-recursive-lock-held
+     *auto-flush-lock*
+     (lambda ()
+       (pushnew stream *auto-flush-streams*)
+       (unless *auto-flush-thread*
+         (setq *auto-flush-thread*
+               (sb-thread:make-thread #'flush-streams
+                                      :name "auto-flush-thread"))))))
 
   (defun flush-streams ()
     (loop
-     (setq *auto-flush-streams*
-           (remove-if (lambda (x)
-                        (not (and (open-stream-p x)
-                                  (output-stream-p x))))
-                      *auto-flush-streams*))
-     (mapc #'finish-output *auto-flush-streams*)
-     (sleep 0.15)))
+     (call-with-recursive-lock-held
+      *auto-flush-lock*
+      (lambda ()
+        (setq *auto-flush-streams*
+              (remove-if (lambda (x)
+                           (not (and (open-stream-p x)
+                                     (output-stream-p x))))
+                         *auto-flush-streams*))
+        (mapc #'finish-output *auto-flush-streams*)))
+     (sleep *auto-flush-interval*)))
 
   )
 

@@ -5,8 +5,8 @@
 ;; Authors: Dmitry Galinsky <dima dot exe at gmail dot com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-controller-layout.el $
-;; $Id: rails-controller-layout.el 131 2007-03-26 21:01:00Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-controller-layout.el $
+;; $Id: rails-controller-layout.el 173 2007-04-09 15:15:02Z dimaexe $
 
 ;;; License
 
@@ -85,7 +85,7 @@
 (defun rails-controller-layout:view-files (controller-name &optional action)
   "Retun a list containing the view file for CONTROLLER-NAME#ACTION.
 If the action is nil, return all views for the controller."
-  (rails-core:with-root
+  (rails-project:with-root
    (root)
    (directory-files
     (rails-core:file
@@ -109,22 +109,74 @@ If the action is nil, return all views for the controller."
       (setq menu (list)))
     menu))
 
+(defun rails-controller-layout:keymap (type)
+  (let* ((name (capitalize (substring (symbol-name type) 1)))
+         (map (make-sparse-keymap))
+         (menu (make-sparse-keymap)))
+    (when type
+      (define-keys menu
+        ([goto-migration]  '(menu-item "Go to Migration"
+                                       rails-controller-layout:switch-to-migration
+                                       :enable (and (not (rails-core:current-mailer))
+                                                    (rails-core:migration-file-by-model
+                                                     (singularize-string (rails-core:current-controller))))))
+        ([goto-model]      '(menu-item "Go to Model"
+                                       rails-controller-layout:switch-to-model
+                                       :enable (and (not (rails-core:current-mailer))
+                                                    (rails-core:model-exist-p
+                                                     (singularize-string (rails-core:current-controller))))))
+        ([goto-helper]     '(menu-item "Go to Helper"
+                                       rails-controller-layout:switch-to-helper
+                                       :enable (and (not (rails-core:current-mailer))
+                                                    (not (eq (rails-core:buffer-type) :helper)))))
+        ([goto-ftest]      '(menu-item "Go to Functional Test"
+                                       rails-controller-layout:switch-to-functional-test
+                                       :enable (and (not (rails-core:current-mailer))
+                                                    (not (eq (rails-core:buffer-type) :functional-test)))))
+        ([goto-controller] '(menu-item "Go to Controller"
+                                       rails-controller-layout:switch-to-controller
+                                       :enable (and (not (rails-core:current-mailer))
+                                                    (not (eq (rails-core:buffer-type) :controller)))))
+        ([goto-utest]      '(menu-item "Go to Unit Test"
+                                       rails-controller-layout:switch-to-unit-test
+                                       :enable (rails-core:current-mailer))))
+      (define-keys map
+        ((rails-key "g") 'rails-controller-layout:switch-to-migration)
+        ((rails-key "m") 'rails-controller-layout:switch-to-model)
+        ((rails-key "h") 'rails-controller-layout:switch-to-helper)
+        ((rails-key "f") 'rails-controller-layout:switch-to-functional-test)
+        ((rails-key "c") 'rails-controller-layout:switch-to-controller)
+        ((rails-key "u") 'rails-controller-layout:switch-to-unit-test)
+        ([menu-bar rails-controller-layout] (cons name menu))))
+    map))
+
 (defun rails-controller-layout:switch-to (type)
-  (let* ((controller (rails-core:current-controller))
+  (let* ((name (capitalize (substring (symbol-name type) 1)))
+         (controller (rails-core:current-controller))
          (model (singularize-string controller))
+         (mailer (rails-core:current-mailer))
          (item (case type
                  (:helper (rails-core:helper-file controller))
                  (:functional-test (rails-core:functional-test-file controller))
                  (:controller (rails-core:controller-file controller))
                  (:model (rails-core:model-file model))
-                 (:migration (rails-core:migration-file (concat "Create" controller))))))
-    (when item
-      (let ((file (rails-core:file item)))
-        (if (file-exists-p file)
-            (progn
-              (find-file file)
-              (message (format "%s: %s" (substring (symbol-name type) 1) controller)))
-          (message "File %s not exists" file))))))
+                 (:unit-test (rails-core:unit-test-file mailer))
+                 (:migration (rails-core:migration-file-by-model model)))))
+    (if item
+        (let ((file (rails-core:file item)))
+          (if (file-exists-p file)
+              (progn
+                (find-file file)
+                (message (format "%s: %s" (substring (symbol-name type) 1) item)))
+            (message "File %s not exists" file)))
+      (message "%s not found" name))))
+
+(defun rails-controller-layout:switch-to-helper () (interactive) (rails-controller-layout:switch-to :helper))
+(defun rails-controller-layout:switch-to-functional-test () (interactive) (rails-controller-layout:switch-to :functional-test))
+(defun rails-controller-layout:switch-to-controller () (interactive) (rails-controller-layout:switch-to :controller))
+(defun rails-controller-layout:switch-to-model () (interactive) (rails-controller-layout:switch-to :model))
+(defun rails-controller-layout:switch-to-migration () (interactive) (rails-controller-layout:switch-to :migration))
+(defun rails-controller-layout:switch-to-unit-test () (interactive) (rails-controller-layout:switch-to :unit-test))
 
 (defun rails-controller-layout:menu ()
   (interactive)
@@ -133,23 +185,24 @@ If the action is nil, return all views for the controller."
          (controller (rails-core:current-controller))
          (action (rails-core:current-action))
          (model (singularize-string controller))
-         (item (rails-controller-layout:views-menu controller)))
+         (mailer (rails-core:current-mailer))
+         (item (rails-controller-layout:views-menu (or controller mailer))))
     (add-to-list 'item (rails-core:menu-separator))
-    (unless (rails-core:mailer-p controller)
+    (when controller
       (when (rails-core:model-exist-p model)
-        (when (rails-core:migration-file (concat "Create" controller))
+        (when (rails-core:migration-file-by-model model)
           (add-to-list 'item (cons "Migration" :migration)))
         (add-to-list 'item (cons "Model" :model)))
       (unless (eq type :helper)
         (add-to-list 'item (cons "Helper" :helper)))
       (unless (eq type :functional-test)
-        (add-to-list 'item (cons "Functional test" :functional-test)))
+        (add-to-list 'item (cons "Functional Test" :functional-test)))
       (unless (eq type :controller)
         (add-to-list 'item (cons "Controller" :controller))))
-    (when (rails-core:mailer-p controller)
-      (add-to-list 'item (cons "Unit test" (rails-core:unit-test-file controller)))
+    (when mailer
+      (add-to-list 'item (cons "Unit Test" (rails-core:unit-test-file mailer)))
       (when (eq type :view)
-        (add-to-list 'item (cons "Mailer" (rails-core:mailer-file controller)))))
+        (add-to-list 'item (cons "Mailer" (rails-core:mailer-file mailer)))))
     (setq item
           (rails-core:menu
            (list (concat title " " controller

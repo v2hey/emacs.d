@@ -14,3 +14,11 @@ config.py
 TAGS
 .workon
 auto-save-list/
+/.emacs.desktop
+/auto-save-list
+/.session
+*.elc
+CVS
+.svn
+*~
+.cvsignore

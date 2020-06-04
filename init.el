@@ -1,3 +1,5 @@
+;; -*- coding: utf-8 -*-
+
 ;;----------------------------------------------------------------------------
 ;; Which functionality to enable (use t or nil for true and false)
 ;;----------------------------------------------------------------------------
@@ -11,6 +13,7 @@
 (setq *erlang-support-enabled* t)
 (setq *darcs-support-enabled* t) ; You can use darcs to update these conf files
 (setq *rails-support-enabled* t)
+(setq *spell-check-support-enabled* nil)
 
 
 ;;----------------------------------------------------------------------------
@@ -26,11 +29,27 @@
 
 
 ;;----------------------------------------------------------------------------
+;; Use elisp package manager (http://tromey.com/elpa/)
+;;----------------------------------------------------------------------------
+(setq load-path (cons (expand-file-name "~/.emacs.d/elpa") load-path))
+(load "package")
+(package-initialize)
+
+
+;;----------------------------------------------------------------------------
 ;; Handier way to add modes to auto-mode-alist
 ;;----------------------------------------------------------------------------
 (defun add-auto-mode (mode &rest patterns)
   (dolist (pattern patterns)
     (add-to-list 'auto-mode-alist (cons pattern mode))))
+
+
+;;----------------------------------------------------------------------------
+;; Find the directory containing a given library
+;;----------------------------------------------------------------------------
+(require 'find-func)
+(defun directory-of-library (library-name)
+  (file-name-as-directory (file-name-directory (find-library-name library-name))))
 
 
 ;;----------------------------------------------------------------------------
@@ -45,6 +64,8 @@
 ;; Augment search path for external programs (for OSX)
 ;;----------------------------------------------------------------------------
 (when *macbook-pro-support-enabled*
+  (eval-after-load "woman"
+    '(setq woman-manpath (append (list "/opt/local/man") woman-manpath)))
   (dolist (dir '("/usr/local/bin" "/opt/local/bin"
                  "/opt/local/lib/postgresql82/bin" "~/bin"))
     (setenv "PATH" (concat (expand-file-name dir) ":" (getenv "PATH")))
@@ -75,7 +96,15 @@
 (defvar *user*    (user-login-name) "user login name")
 (defvar *hostname*
   (let ((n (system-name))) (substring n 0 (string-match "\\." n))) "unqualified host name")
-(setq frame-title-format '("%b - " *user* "@" *hostname* " - %f"))
+(defun concise-buffer-file-name ()
+  (let ((fn (buffer-file-name)))
+    (when fn
+      (let* ((homedir (getenv "HOME"))
+             (homepos (string-match homedir fn)))
+        (if homepos
+            (concat "~" (substring fn (match-end 0)))
+          (homedir))))))
+(setq frame-title-format '("%b - " *user* "@" *hostname* " - " (:eval (concise-buffer-file-name))))
 
 
 ;;----------------------------------------------------------------------------
@@ -85,9 +114,12 @@
 
 
 ;;----------------------------------------------------------------------------
-;; Use Apple-w to close current buffer on OS-X (is normally bound to kill-ring-save)
+;; OS X usability tweaks
 ;;----------------------------------------------------------------------------
 (when *macbook-pro-support-enabled*
+  ;; Make mouse wheel / trackpad scrolling less jerky
+  (setq mouse-wheel-scroll-amount '(0.001))
+  ;; Use Apple-w to close current buffer on OS-X (is normally bound to kill-ring-save)
   (global-set-key [(meta w)] 'kill-this-buffer))
 
 
@@ -95,6 +127,7 @@
 ;; Enhanced dired
 ;;----------------------------------------------------------------------------
 (require 'dired+)
+(setq dired-recursive-deletes 'top)
 
 
 ;;----------------------------------------------------------------------------
@@ -111,10 +144,46 @@
 ;; VI emulation and related key mappings
 ;;----------------------------------------------------------------------------
 (when *vi-emulation-support-enabled*
+  ;; C-z is usually 'iconify-or-deiconify-frame, but viper uses it to toggle
+  ;; vi/emacs input modes, causing confusion in non-viper buffers
+  (global-unset-key "\C-z")
   (setq viper-mode t)
   (require 'viper)
   (define-key viper-insert-global-user-map "\C-n" 'hippie-expand)
   (define-key viper-insert-global-user-map "\C-p" 'hippie-expand))
+
+
+;;----------------------------------------------------------------------------
+;; Turn on highline mode globally
+;;----------------------------------------------------------------------------
+(require 'hl-line+)
+(toggle-hl-line-when-idle 1)
+
+;;----------------------------------------------------------------------------
+;; Show a marker in the left fringe for lines not in the buffer
+;;----------------------------------------------------------------------------
+(setq default-indicate-empty-lines t)
+
+
+;;----------------------------------------------------------------------------
+;; Don't disable case-change functions
+;;----------------------------------------------------------------------------
+(put 'upcase-region 'disabled nil)
+(put 'downcase-region 'disabled nil)
+
+
+;;----------------------------------------------------------------------------
+;; Scroll the window smoothly with the up/down arrows
+;;----------------------------------------------------------------------------
+(require 'smooth-scrolling)
+
+
+;;----------------------------------------------------------------------------
+;; Dynamic expansion tweaks
+;;----------------------------------------------------------------------------
+(eval-after-load "hippie-exp"
+  '(setq hippie-expand-try-functions-list
+         (remove 'try-expand-line hippie-expand-try-functions-list)))
 
 
 ;;----------------------------------------------------------------------------
@@ -132,9 +201,29 @@
 
 
 ;;----------------------------------------------------------------------------
+;; Javascript
+;;----------------------------------------------------------------------------
+;; ;; Can't get this to work...
+;; (eval-after-load "mmm-mode"
+;;   '(progn
+;;      (load-library "javascript")
+;;      (load-library "css-mode")
+;;      (require 'mmm-sample)
+;;      (add-to-list 'mmm-mode-ext-classes-alist '(nxml-mode nil html-js))
+;;      (add-to-list 'mmm-mode-ext-classes-alist '(nxml-mode nil embedded-css))))
+(autoload 'flymake-js-load "flymake-js" "On-the-fly syntax checking of javascript" t)
+(add-hook 'javascript-mode-hook '(lambda () (flymake-js-load)))
+
+;; Spiffy new js2-mode from Steve Yegge (http://code.google.com/p/js2-mode/)
+(autoload 'js2-mode "js2" nil t)
+(add-to-list 'auto-mode-alist '("\\.js$" . js2-mode))
+(setq js2-use-font-lock-faces t)
+
+;;----------------------------------------------------------------------------
 ;; Extensions -> Modes
 ;;----------------------------------------------------------------------------
 (add-auto-mode 'html-mode "\\.(jsp|tmpl)$")
+(add-auto-mode 'tcl-mode "Portfile$")
 
 
 ;;----------------------------------------------------------------------------
@@ -151,6 +240,13 @@
 
 
 ;;----------------------------------------------------------------------------
+;; Regex-tool
+;;----------------------------------------------------------------------------
+(autoload 'regex-tool "regex-tool" "Mode for exploring regular expressions" t)
+(setq regex-tool-backend 'perl)
+
+
+;;----------------------------------------------------------------------------
 ;; Subversion
 ;;----------------------------------------------------------------------------
 (require 'psvn)
@@ -160,7 +256,6 @@
 ;; Darcs
 ;;----------------------------------------------------------------------------
 (when *darcs-support-enabled*
-  (require 'darcs)
   (add-to-list 'vc-handled-backends 'DARCS)
   (autoload 'vc-darcs-find-file-hook "vc-darcs")
   (add-hook 'find-file-hooks 'vc-darcs-find-file-hook)
@@ -173,12 +268,30 @@
 
 
 ;;----------------------------------------------------------------------------
+;; Git
+;;----------------------------------------------------------------------------
+;;(setq load-path (cons (expand-file-name "/usr/share/doc/git-core/contrib/emacs") load-path))
+;; Downloaded from http://git.kernel.org/?p=git/git.git ;a=tree;hb=HEAD;f=contrib/emacs
+(require 'vc-git)
+(when (featurep 'vc-git) (add-to-list 'vc-handled-backends 'git))
+(require 'git)
+(autoload 'git-blame-mode "git-blame" "Minor mode for incremental blame for Git." t)
+(autoload 'gitsum "gitsum" "Make hunk-based git commits" t)
+
+(eval-after-load "compile"
+  '(add-to-list 'compilation-error-regexp-alist-alist
+                '(git-svn "^\\t[A-Z]\\t(.*)$" 1)))
+(defun git-svn ()
+  (interactive)
+  (compile (concat "git-svn " (ido-completing-read "git-svn command: " (list "rebase" "dcommit" "log") nil t))))
+
+
+;;----------------------------------------------------------------------------
 ;; Multiple major modes
 ;;----------------------------------------------------------------------------
-(require 'mmm-mode)
+(require 'mmm-auto)
 (setq mmm-global-mode t)
-(setq mmm-submode-decoration-level 0)
-(mmm-add-mode-ext-class nil "\.jsp$" 'jsp)
+(setq mmm-submode-decoration-level 2)
 (setq-default mmm-never-modes
               (append '(sldb-mode) '(ediff-mode) '(text-mode)
                       '(compilation-mode) '(inferior-haskell-mode)
@@ -190,13 +303,10 @@
 ;;----------------------------------------------------------------------------
 ;; Use C-f during file selection to switch to regular find-file
 (ido-mode t)  ; use 'buffer rather than t to use only buffer switching
+(ido-everywhere t)
 (setq ido-enable-flex-matching t)
+(setq ido-use-filename-at-point t)
 (setq ido-auto-merge-work-directories-length -1)
-
-(setq ibuffer-shrink-to-minimum-size t
-      ibuffer-always-show-last-buffer nil
-      ibuffer-sorting-mode 'recency
-      ibuffer-use-header-line t)
 
 (require 'recentf)
 (setq recentf-max-saved-items 100)
@@ -205,6 +315,20 @@
   (interactive)
   (find-file (ido-completing-read "Open file: " recentf-list nil t)))
 (global-set-key [(meta f11)] 'steve-ido-choose-from-recentf)
+
+
+;;----------------------------------------------------------------------------
+;; When splitting window, show (other-buffer) in the new window
+;;----------------------------------------------------------------------------
+(defun split-window-func-with-other-buffer (split-function)
+  (lexical-let ((s-f split-function))
+    (lambda ()
+      (interactive)
+      (funcall s-f)
+      (set-window-buffer (next-window) (other-buffer)))))
+
+(global-set-key "\C-x2" (split-window-func-with-other-buffer 'split-window-vertically))
+(global-set-key "\C-x3" (split-window-func-with-other-buffer 'split-window-horizontally))
 
 
 ;;----------------------------------------------------------------------------
@@ -224,12 +348,14 @@
 (setq session-save-file (expand-file-name "~/.emacs.d/.session"))
 (add-hook 'after-init-hook 'session-initialize)
 
-
 ;; save a bunch of variables to the desktop file
 ;; for lists specify the len of the maximal saved data also
 (setq desktop-globals-to-save
       (append '((extended-command-history . 30)
                 (file-name-history        . 100)
+                (ido-last-directory-list  . 100)
+                (ido-work-directory-list  . 100)
+                (ido-work-file-list       . 100)
                 (grep-history             . 30)
                 (compile-history          . 30)
                 (minibuffer-history       . 50)
@@ -246,11 +372,28 @@
 ;;----------------------------------------------------------------------------
 ;; Window size and features
 ;;----------------------------------------------------------------------------
+(defun steve-set-default-font (name size)
+  (interactive
+   (list (ido-completing-read "font-name: " (mapcar (lambda (n) (list n n)) (mapcar (lambda (p) (car p)) (x-font-family-list))) nil t)
+         (read-number "size: " 12)))
+  (set-face-attribute 'default nil
+                      :family name
+                      :slant  'normal
+                      :weight 'normal
+                      :width  'normal
+                      :height (* 10 size)))
+
+(lexical-let ((font-name "monaco") (font-size 11))
+  ;;         ((font-name "bitstream vera sans mono"))
+  (defun steve-set-default-font-size ()
+    (steve-set-default-font font-name font-size)))
+
+(steve-set-default-font-size)
+
+(require 'maxframe)
 (when *macbook-pro-support-enabled*
-  (set-face-attribute 'default nil :family "monaco" :height 120)  
-  ;; Default frame size (perfect for Macbook Pro when scrollbar, dock and toolbar hidden...)
-  (setq initial-frame-alist '((width  . 202) (height . 53) (top . 0) (left . 3) (tool-bar-lines . 0)))
-  (setq default-frame-alist '((width  . 202) (height . 53) (top . 22) (left . 3) (tool-bar-lines . 0))))
+  (setq mf-offset-x 3))
+(add-hook 'window-setup-hook 'maximize-frame t)
 
 (tool-bar-mode nil)
 (scroll-bar-mode nil)
@@ -264,11 +407,29 @@
   (setq semanticdb-default-save-directory (expand-file-name "~/.semanticdb"))
   (unless (file-directory-p semanticdb-default-save-directory)
     (make-directory semanticdb-default-save-directory))
+
+  ;; Force shadowing of the Emacs-bundled speedbar (cedet's "inversion" package tries
+  ;; and fails to handle this)
+  (setq load-path (cons (concat (directory-of-library "cedet") "/../speedbar/") load-path))
   (require 'cedet)
   (require 'ecb-autoloads)
 
   (add-hook 'ecb-activate-hook
             (lambda () (setq global-semantic-idle-scheduler-mode nil))))
+
+
+;;----------------------------------------------------------------------------
+;; Compilation
+;;----------------------------------------------------------------------------
+(add-hook 'compilation-mode-hook (lambda () (local-set-key [f6] 'recompile)))
+
+
+;;----------------------------------------------------------------------------
+;; Browse current HTML file
+;;----------------------------------------------------------------------------
+(defun browse-current-file ()
+  (interactive)
+  (browse-url (concat "file://" (buffer-file-name))))
 
 
 ;;----------------------------------------------------------------------------
@@ -282,12 +443,20 @@
 (setq magic-mode-alist (cons '("<＼＼?xml " . nxml-mode) magic-mode-alist))
 (fset 'html-mode 'nxml-mode)
 (fset 'xml-mode 'nxml-mode)
+(add-hook 'nxml-mode-hook (lambda ()
+                            (make-variable-buffer-local 'ido-use-filename-at-point)
+                            (setq ido-use-filename-at-point nil)))
+(when *spell-check-support-enabled*
+  (add-hook 'nxml-mode-hook
+            (lambda ()
+              (add-to-list 'flyspell-prog-text-faces 'nxml-text-face))))
 
 
 ;;----------------------------------------------------------------------------
 ;; Ruby
 ;;----------------------------------------------------------------------------
-(autoload 'ruby-electric "ruby-electric" "Electric brackes/quotes/keywords for Ruby source" t)
+(autoload 'ruby-electric-mode "ruby-electric" "Electric brackes/quotes/keywords for Ruby source" t)
+(require 'rcodetools)
 (setq ruby-electric-expand-delimiters-list nil)  ; Only use ruby-electric for adding 'end'
 (add-hook 'ruby-mode-hook
           (lambda () (ruby-electric-mode t)))
@@ -296,23 +465,35 @@
 
 (add-auto-mode 'ruby-mode "Rakefile$" "\.rake$" "\.rxml$" "\.rjs" ".irbrc")
 (add-auto-mode 'html-mode "\.rhtml$")
-
-
 (eval-after-load "compile"
   '(progn
-    ;; Jump to lines from Ruby Test::Unit stack traces in 'compile' mode
-    (add-to-list 'compilation-error-regexp-alist
-                 '("test[a-zA-Z0-9_]*([A-Z][a-zA-Z0-9_]*) \\[\\(.*\\):\\([0-9]+\\)\\]:" 1 2))
-    ;; Jump to lines from Ruby stack traces in 'compile' mode
-    (add-to-list 'compilation-error-regexp-alist
-                 '("\\(.*?\\)\\([0-9A-Za-z_./\:-]+\\.rb\\):\\([0-9]+\\)" 2 3))))
+     ;; Jump to lines from Ruby stack traces in 'compile' mode
+     (add-to-list 'compilation-error-regexp-alist-alist
+                  '(ruby "\\([0-9A-Za-z_./\:-]+\\.rb\\):\\([0-9]+\\):in `" 1 2))))
 (setq compile-command "rake ")
 
-(mmm-add-classes
- '((eruby :submode ruby-mode :front "<%=?" :back  "-?%>")))
+(eval-after-load "mmm-mode"
+  '(progn
+     (mmm-add-classes
+      '((eruby :submode ruby-mode :front "<%[#=]?" :back "-?%>"
+               :match-face (("<%#" . mmm-comment-submode-face)
+                            ("<%=" . mmm-output-submode-face)
+                            ("<%"  . mmm-code-submode-face))
+               :insert ((?% erb-code       nil @ "<%"  @ " " _ " " @ "%>" @)
+                        (?# erb-comment    nil @ "<%#" @ " " _ " " @ "%>" @)
+                        (?= erb-expression nil @ "<%=" @ " " _ " " @ "%>" @)))))
+     (mmm-add-mode-ext-class 'nxml-mode "\\.rhtml$" 'eruby)
+     (mmm-add-mode-ext-class 'yaml-mode "\\.yml$" 'eruby)))
 
-(mmm-add-mode-ext-class 'nxml-mode "\\.rhtml$" 'eruby)
-(mmm-add-mode-ext-class 'yaml-mode "\\.yml$" 'eruby)
+
+(define-derived-mode ruby-compilation-mode compilation-mode "Compilation[ruby]"
+  "Major mode for running ruby scripts and tests."
+  (set (make-local-variable 'compilation-error-regexp-alist) '(ruby)))
+
+(defun ruby-compile (command)
+  (compile command)
+  (with-current-buffer "*compilation*" (ruby-compilation-mode)))
+
 
 (require 'which-func)
 (add-to-list 'which-func-modes 'ruby-mode)
@@ -322,26 +503,23 @@
 (defun ruby-execute-current-file ()
   "Execute the current ruby file (e.g. to execute all tests)."
   (interactive)
-  (compile (concat "ruby " (file-name-nondirectory (buffer-file-name)))))
+  (ruby-compile (concat "ruby " (file-name-nondirectory (buffer-file-name)))))
 (defun ruby-test-function ()
   "Test the current ruby function (must be runnable via ruby <buffer> --name <test>)."
   (interactive)
   (let* ((funname (which-function))
          (fn (and funname (and (string-match "\\(#\\|::\\)\\(test.*\\)" funname) (match-string 2 funname)))))
-    (compile (concat "ruby " (file-name-nondirectory (buffer-file-name)) (and fn (concat " --name " fn))))))
+    (ruby-compile (concat "ruby " (file-name-nondirectory (buffer-file-name)) (and fn (concat " --name " fn))))))
 
-; run the current buffer using Shift-F8
-(add-hook 'ruby-mode-hook (lambda () (local-set-key [S-f8] 'ruby-execute-current-file)))
+; run the current buffer using Shift-F7
+(add-hook 'ruby-mode-hook (lambda () (local-set-key [S-f7] 'ruby-execute-current-file)))
 ; run the current test function using F8 key
-(add-hook 'ruby-mode-hook (lambda () (local-set-key [f8] 'ruby-test-function)))
+(add-hook 'ruby-mode-hook (lambda () (local-set-key [f7] 'ruby-test-function)))
 
-(add-hook 'ruby-mode-hook (lambda () (local-set-key [f7] 'recompile)))
-(add-hook 'rails-minor-mode-hook (lambda () (local-set-key [f7] 'recompile)))
+(add-hook 'ruby-mode-hook (lambda () (local-set-key [f6] 'recompile)))
+(when *rails-support-enabled*
+  (add-hook 'rails-minor-mode-hook (lambda () (local-set-key [f6] 'recompile))))
 
-
-(require 'find-func)
-(defun directory-of-library (library-name)
-  (file-name-as-directory (file-name-directory (find-library-name library-name))))
 
 (autoload 'ri "ri-ruby" "Show ri documentation for Ruby symbols" t)
 (setq ri-ruby-script (concat (directory-of-library "ri-ruby") "ri-emacs.rb"))
@@ -351,29 +529,22 @@
 ; Rails (http://rubyforge.org/projects/emacs-rails/)
 ;;----------------------------------------------------------------------------
 (when *rails-support-enabled*
-  (defun try-complete-abbrev (old)
-    (if (expand-abbrev) t nil))
-
-  (setq hippie-expand-try-functions-list
-        '(try-complete-abbrev
-          try-complete-file-name
-          try-expand-dabbrev))
-
-  ; Remove annoying tab completion behaviour enabled by Rails
-  (eval-after-load "rails-lib" '(defun indent-or-complete ()
-                                  (interactive)
-                                  (unless (when (and (boundp 'snippet)
-                                                     snippet)
-                                            (snippet-next-field))
-                                    (indent-for-tab-command))))
-
   (require 'rails)
   (setq rails-webrick:use-mongrel t)
   (setq rails-api-root (expand-file-name "~/Documents/External/rails"))
 
   (when *ecb-support-enabled*
     (require 'ecb)
-    (add-to-list 'ecb-compilation-buffer-names '("\\(development\\|test\\|production\\).log" . t))))
+    ;; Flymake confuses ecb's idea of which buffers are compilation buffers
+    (defun comint-but-not-flymake-p (buf)
+      (and (comint-check-proc buf)
+           (not (buffer-local-value 'flymake-mode-line buf))))
+    (setq ecb-compilation-predicates '(comint-but-not-flymake-p))
+
+    (setq ecb-compilation-buffer-names
+          (append ecb-compilation-buffer-names
+                  '(("\\(development\\|test\\|production\\).log" . t)
+                    ("\\*R" . t))))))
 
 
 ;;----------------------------------------------------------------------------
@@ -405,10 +576,21 @@
 
 
 ;;----------------------------------------------------------------------------
+;; Shell mode
+;;----------------------------------------------------------------------------
+(autoload 'flymake-shell-load "flymake-shell" "On-the-fly syntax checking of shell scripts" t)
+(add-hook 'sh-mode-hook 'flymake-shell-load)
+
+
+;;----------------------------------------------------------------------------
 ;; PHP
 ;;----------------------------------------------------------------------------
 (autoload 'php-mode "php-mode" "mode for editing php files" t)
-(add-auto-mode 'php-mode "\\.php[345]?\\'\\|\\.phtml\\." "\\.(inc|tpl)$")
+(add-auto-mode 'php-mode "\\.php[345]?\\'\\|\\.phtml\\." "\\.(inc|tpl)$" "\\.module$")
+(add-hook 'php-mode-hook
+          (lambda ()
+            (require 'flymake-php)
+            (flymake-mode t)))
 
 
 ;;----------------------------------------------------------------------------
@@ -437,21 +619,58 @@
 (add-hook 'emacs-lisp-mode-hook (lambda () (enable-paredit emacs-lisp-mode-map)))
 
 (when *common-lisp-support-enabled*
-  (setf slime-lisp-implementations
+  ;; See http://bc.tech.coop/blog/070927.html
+  (setq slime-lisp-implementations
         '((sbcl ("sbcl") :coding-system utf-8-unix)
           (cmucl ("cmucl") :coding-system iso-latin-1-unix)))
-  (setf slime-default-lisp 'sbcl)
-  (require 'slime)
-  (slime-setup)
+  (require 'slime-autoloads)
   (add-auto-mode 'lisp-mode "\\.cl$")
-  (add-hook 'slime-mode-hook 'pretty-lambdas)
-  (add-hook 'slime-mode-hook (lambda () (enable-paredit slime-mode-map)))
-  (global-set-key [f4] 'slime-selector))
+  (global-set-key [f4] 'slime-selector)
+  (add-hook 'lisp-mode-hook (lambda ()
+                              (cond ((not (featurep 'slime))
+                                     (require 'slime)
+                                     (normal-mode)))))
+
+  (eval-after-load "slime"
+    '(progn
+       (add-to-list 'load-path (concat (directory-of-library "slime") "/contrib"))
+       (slime-setup '(slime-fancy slime-banner slime-asdf))
+       (setq slime-complete-symbol*-fancy t)
+       (setq slime-complete-symbol-function 'slime-fuzzy-complete-symbol)
+       (add-hook 'slime-mode-hook 'pretty-lambdas)
+       (add-hook 'slime-mode-hook (lambda () (enable-paredit slime-mode-map)))
+       (slime-setup)))
+
+  ; From http://bc.tech.coop/blog/070515.html
+  (defun lispdoc ()
+    "Searches lispdoc.com for SYMBOL, which is by default the symbol currently under the curser"
+    (interactive)
+    (let* ((word-at-point (word-at-point))
+           (symbol-at-point (symbol-at-point))
+           (default (symbol-name symbol-at-point))
+           (inp (read-from-minibuffer
+                 (if (or word-at-point symbol-at-point)
+                     (concat "Symbol (default " default "): ")
+                   "Symbol (no default): "))))
+      (if (and (string= inp "") (not word-at-point) (not
+                                                     symbol-at-point))
+          (message "you didn't enter a symbol!")
+        (let ((search-type (read-from-minibuffer
+                            "full-text (f) or basic (b) search (default b)? ")))
+          (browse-url (concat "http://lispdoc.com?q="
+                              (if (string= inp "")
+                                  default
+                                inp)
+                              "&search="
+                              (if (string-equal search-type "f")
+                                  "full+text+search"
+                                "basic+search")))))))
+  (define-key lisp-mode-map (kbd "C-c l") 'lispdoc))
 
 (when *scheme-support-enabled*
   ; See http://bc.tech.coop/scheme/scheme-emacs.htm
   (require 'quack))
-    
+
 
 ;;----------------------------------------------------------------------------
 ;; Haskell
@@ -468,7 +687,7 @@
 
   (add-hook 'haskell-mode-hook
             (lambda ()
-	      (define-key haskell-mode-map [?\C-c h] 'hoogle-lookup)
+              (define-key haskell-mode-map [?\C-c h] 'hoogle-lookup)
               (turn-on-haskell-doc-mode)
               (turn-on-haskell-indent))))
 
@@ -477,12 +696,35 @@
 ;; OCaml
 ;;----------------------------------------------------------------------------
 (when *ocaml-support-enabled*
-  (add-auto-mode 'caml-mode "\\.ml[iylp]?$")
-  (autoload 'caml-mode "caml" "Major mode for editing Caml code." t)
-  (autoload 'run-caml "inf-caml" "Run an inferior Caml process." t)
-  (if window-system (require 'caml-font)))
+  (setq auto-mode-alist (cons '("\\.ml\\w?" . tuareg-mode) auto-mode-alist))
+  (autoload 'tuareg-mode "tuareg" "Major mode for editing Caml code" t)
+  (autoload 'camldebug "camldebug" "Run the Caml debugger" t))
 
-  
+
+;;----------------------------------------------------------------------------
+;; Add spell-checking in comments for all programming language modes
+;;----------------------------------------------------------------------------
+(when *spell-check-support-enabled*
+  (dolist (hook '(lisp-mode-hook
+                  emacs-lisp-mode-hook
+                  scheme-mode-hook
+                  ruby-mode-hook
+                  yaml-mode
+                  python-mode-hook
+                  shell-mode-hook
+                  php-mode-hook
+                  css-mode-hook
+                  haskell-mode-hook
+                  caml-mode-hook
+                  nxml-mode-hook
+                  crontab-mode-hook
+                  perl-mode-hook
+                  tcl-mode-hook
+                  javascript-mode-hook))
+    (add-hook hook 'flyspell-prog-mode)))
+
+
+
 ;;----------------------------------------------------------------------------
 ;; Conversion of line endings
 ;;----------------------------------------------------------------------------
@@ -506,6 +748,7 @@
 ;; Locales (setting them earlier in this file doesn't work in X)
 ;;----------------------------------------------------------------------------
 (when (or window-system (string-match "UTF-8" (shell-command-to-string "locale")))
+  (setq utf-translate-cjk-mode nil) ; disable CJK coding/encoding (Chinese/Japanese/Korean characters)
   (set-language-environment 'utf-8)
   (set-keyboard-coding-system 'utf-8-mac)
   (setq locale-coding-system 'utf-8)
@@ -513,3 +756,24 @@
   (set-terminal-coding-system 'utf-8)
   (set-selection-coding-system 'utf-8)
   (prefer-coding-system 'utf-8))
+
+
+;;----------------------------------------------------------------------------
+;; Color themes
+;;----------------------------------------------------------------------------
+(require 'color-theme-autoloads)
+(color-theme-initialize)
+;; (color-theme-pierson) ; Light, favourite
+;; (color-theme-high-contrast)
+;; (color-theme-snowish)
+;; (color-theme-marquardt)
+;; (color-theme-clarity) ; dark
+;; (color-theme-dark-laptop) ; dark
+;; (color-theme-billw) ; dark
+;; (color-theme-oswald) ; dark
+(color-theme-taylor) ; dark
+;; (color-theme-standard)
+
+;; Set default font size after setting color theme, otherwise wrong size
+;; is used for new frames
+(steve-set-default-font-size)

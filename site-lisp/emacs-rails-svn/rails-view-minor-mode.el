@@ -5,8 +5,8 @@
 ;; Authors: Dmitry Galinsky <dima dot exe at gmail dot com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-view-minor-mode.el $
-;; $Id: rails-view-minor-mode.el 112 2007-03-24 22:34:38Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-view-minor-mode.el $
+;; $Id: rails-view-minor-mode.el 173 2007-04-09 15:15:02Z dimaexe $
 
 ;;; License
 
@@ -67,7 +67,7 @@
              end-pos
              (> current-pos begin-pos)
              (< current-pos end-pos))
-        (let* ((helper-file (concat (rails-core:root) (rails-core:helper-file (rails-core:current-controller))))
+        (let* ((helper-file (concat (rails-project:root) (rails-core:helper-file (rails-core:current-controller))))
                (content (replace-regexp-in-string "\\(<%=?\\|-?%>\\)" ""
                                                   (buffer-substring-no-properties begin-pos end-pos)))
                (helper-defination (if helper-name helper-name
@@ -100,17 +100,16 @@
 
 (define-minor-mode rails-view-minor-mode
   "Minor mode for RubyOnRails views."
-  nil
-  " view"
-  nil
+  :lighter " View"
+  :keymap (rails-controller-layout:keymap :view)
   (setq rails-primary-switch-func 'rails-controller-layout:toggle-action-view)
   (setq rails-secondary-switch-func 'rails-controller-layout:menu)
   (if (boundp 'mmm-mode-map)
       (progn
-        (define-key mmm-mode-map (kbd "\C-c p") 'rails-view-minor-mode:create-partial-from-selection)
-        (define-key mmm-mode-map (kbd "\C-c b") 'rails-view-minor-mode:create-helper-from-block))
+        (define-key mmm-mode-map (rails-key "p") 'rails-view-minor-mode:create-partial-from-selection)
+        (define-key mmm-mode-map (rails-key "b") 'rails-view-minor-mode:create-helper-from-block))
     (progn
-      (local-set-key (kbd "\C-c p") 'rails-view-minor-mode:create-partial-from-selection)
-      (local-set-key (kbd "\C-c b") 'rails-view-minor-mode:create-helper-from-block))))
+      (local-set-key (rails-key "p") 'rails-view-minor-mode:create-partial-from-selection)
+      (local-set-key (rails-key "b") 'rails-view-minor-mode:create-helper-from-block))))
 
 (provide 'rails-view-minor-mode)

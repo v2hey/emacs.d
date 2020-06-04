@@ -15,12 +15,11 @@
   (:export #:sldb-condition
            #:original-condition
            #:compiler-condition
-           #:abort-request
-           #:request-abort
            #:message
            #:short-message
            #:condition
            #:severity
+           #:with-compilation-hooks
            #:location
            #:location-p
            #:location-buffer
@@ -31,14 +30,17 @@
            #:quit-lisp
            #:references
            #:unbound-slot-filler
+           #:declaration-arglist
+           #:type-specifier-arglist
            ;; inspector related symbols
            #:inspector
+           #:backend-inspector
            #:inspect-for-emacs
            #:raw-inspection
            #:fancy-inspection
            #:label-value-line
            #:label-value-line*
-           #:type-for-emacs
+           #:with-struct
            ))
 
 (defpackage :swank-mop
@@ -108,11 +110,15 @@ DEFINTERFACE adds to this list and DEFIMPLEMENTATION removes.")
 
 (defmacro definterface (name args documentation &rest default-body)
   "Define an interface function for the backend to implement.
-A generic function is defined with NAME, ARGS, and DOCUMENTATION.
+A function is defined with NAME, ARGS, and DOCUMENTATION.  This
+function first looks for a function to call in NAME's property list
+that is indicated by 'IMPLEMENTATION; failing that, it looks for a
+function indicated by 'DEFAULT. If neither is present, an error is
+signaled.
 
-If a DEFAULT-BODY is supplied then NO-APPLICABLE-METHOD is specialized
-to execute the body if the backend doesn't provide a specific
-implementation.
+If a DEFAULT-BODY is supplied, then a function with the same body and
+ARGS will be added to NAME's property list as the property indicated
+by 'DEFAULT.
 
 Backends implement these functions using DEFIMPLEMENTATION."
   (check-type documentation string "a documentation string")
@@ -162,20 +168,6 @@ Backends implement these functions using DEFIMPLEMENTATION."
                (remove ',name *unimplemented-interfaces*))
          (warn "DEFIMPLEMENTATION of undefined interface (~S)" ',name))
      ',name))
-
-(define-condition request-abort (error)
-  ((reason  :initarg :reason :reader reason))
-  (:report (lambda (condition stream)
-             (princ (reason condition) stream)))
-  (:documentation "Condition signalled when SLIME wasn't able to
-complete a user request due to bad data. This condition is not
-for real errors but for situations where SLIME has to give up and
-return control back to the user."))
-
-(defun abort-request (reason-control &rest reason-args)
-  "Abort whatever swank is currently do and send a message to the
-user."
-  (error 'request-abort :reason (apply #'format nil reason-control reason-args)))
 
 (defun warn-unimplemented-interfaces ()
   "Warn the user about unimplemented backend features.
@@ -358,20 +350,6 @@ If DIRECTORY is specified it may be used by certain implementations to
 rebind *DEFAULT-PATHNAME-DEFAULTS* which may improve the recording of
 source information.")
 
-(definterface operate-on-system (system-name operation-name &rest keyword-args)
-  "Perform OPERATION-NAME on SYSTEM-NAME using ASDF.
-The KEYWORD-ARGS are passed on to the operation.
-Example:
-\(operate-on-system \"SWANK\" \"COMPILE-OP\" :force t)"
-  (unless (member :asdf *features*)
-    (abort-request "ASDF is not loaded."))
-  (with-compilation-hooks ()
-    (let ((operate (find-symbol (symbol-name '#:operate) :asdf))
-          (operation (find-symbol operation-name :asdf)))
-      (when (null operation)
-        (abort-request "Couldn't find ASDF operation ~S" operation-name))
-      (apply operate operation system-name keyword-args))))
-
 (definterface swank-compile-file (filename load-p external-format)
    "Compile FILENAME signalling COMPILE-CONDITIONs.
 If LOAD-P is true, load the file after compilation.
@@ -481,10 +459,54 @@ like."
    "Return the lambda list for the symbol NAME. NAME can also be
 a lisp function object, on lisps which support this.
 
-The result can be a list or the :not-available if the arglist
-cannot be determined."
+The result can be a list or the :not-available keyword if the
+arglist cannot be determined."
    (declare (ignore name))
    :not-available)
+
+(defgeneric declaration-arglist (decl-identifier)
+  (:documentation
+   "Return the argument list of the declaration specifier belonging to the
+declaration identifier DECL-IDENTIFIER. If the arglist cannot be determined,
+the keyword :NOT-AVAILABLE is returned.
+
+The different SWANK backends can specialize this generic function to
+include implementation-dependend declaration specifiers, or to provide
+additional information on the specifiers defined in ANSI Common Lisp.")
+  (:method (decl-identifier)
+    (case decl-identifier
+      (dynamic-extent '(&rest vars))
+      (ignore         '(&rest vars))
+      (ignorable      '(&rest vars))
+      (special        '(&rest vars))
+      (inline         '(&rest function-names))
+      (notinline      '(&rest function-name))
+      (optimize       '(&any compilation-speed debug safety space speed))  
+      (type           '(type-specifier &rest args))
+      (ftype          '(type-specifier &rest function-names))
+      (otherwise
+       (flet ((typespec-p (symbol) (member :type (describe-symbol-for-emacs symbol))))
+         (cond ((and (symbolp decl-identifier) (typespec-p decl-identifier))
+                '(&rest vars))
+               ((and (listp decl-identifier) (typespec-p (first decl-identifier)))
+                '(&rest vars))
+               (t :not-available)))))))
+
+(defgeneric type-specifier-arglist (typespec-operator)
+  (:documentation
+   "Return the argument list of the type specifier belonging to
+TYPESPEC-OPERATOR.. If the arglist cannot be determined, the keyword
+:NOT-AVAILABLE is returned.
+
+The different SWANK backends can specialize this generic function to
+include implementation-dependend declaration specifiers, or to provide
+additional information on the specifiers defined in ANSI Common Lisp.")
+  (:method (typespec-operator)
+    (declare (special *type-specifier-arglists*)) ; defined at end of file.
+    (typecase typespec-operator
+      (symbol (or (cdr (assoc typespec-operator *type-specifier-arglists*))
+                  :not-available))
+      (t :not-available))))
 
 (definterface function-name (function)
   "Return the name of the function object FUNCTION.
@@ -600,6 +622,13 @@ returned.  Frame zero is defined as the frame which invoked the
 debugger.  If END is nil, return the frames from START to the end of
 the stack.")
 
+(definterface compute-sane-restarts (condition)
+  "This is an opportunity for Lisps such as CLISP to remove
+unwanted restarts from the output of CL:COMPUTE-RESTARTS,
+otherwise it should simply call CL:COMPUTE-RESTARTS, which is
+what the default implementation does."
+  (compute-restarts condition))
+
 (definterface print-frame (frame stream)
   "Print frame to stream.")
 
@@ -657,20 +686,12 @@ as it was called originally.")
   "Format a condition for display in SLDB."
   (princ-to-string condition))
 
-(definterface condition-references (condition)
-  "Return a list of documentation references for a condition.
-Each reference is one of:
-  (:ANSI-CL
-   {:FUNCTION | :SPECIAL-OPERATOR | :MACRO | :SECTION | :GLOSSARY }
-   symbol-or-name)
-  (:SBCL :NODE node-name)"
-  (declare (ignore condition))
-  '())
-
 (definterface condition-extras (condition)
   "Return a list of extra for the debugger.
 The allowed elements are of the form:
-  (:SHOW-FRAME-SOURCE frame-number)"
+  (:SHOW-FRAME-SOURCE frame-number)
+  (:REFERENCES &rest refs)
+"
   (declare (ignore condition))
   '())
 
@@ -826,6 +847,8 @@ themselves, that is, their dispatch functions, are left alone.")
 Implementations should sub class in order to dispatch off of the
 inspect-for-emacs method."))
 
+(defclass backend-inspector (inspector) ())
+
 (definterface make-default-inspector ()
   "Return an inspector object suitable for passing to inspect-for-emacs.")
 
@@ -850,8 +873,10 @@ inserted into the buffer as is, or a list of the form:
 
  (:newline) - Render a \\n
 
- (:action label lambda) - Render LABEL (a text string) which when
- clicked will call LAMBDA.
+ (:action label lambda &key (refresh t)) - Render LABEL (a text
+ string) which when clicked will call LAMBDA. If REFRESH is
+ non-NIL the currently inspected object will be re-inspected
+ after calling the lambda.
 
  NIL - do nothing."))
 
@@ -870,27 +895,15 @@ output of CL:DESCRIBE."
 
 ;;; Utilities for inspector methods.
 ;;; 
-(defun label-value-line (label value)
-  "Create a control list which prints \"LABEL: VALUE\" in the inspector."
-  (list (princ-to-string label) ": " `(:value ,value) '(:newline)))
+(defun label-value-line (label value &key (newline t))
+  "Create a control list which prints \"LABEL: VALUE\" in the inspector.
+If NEWLINE is non-NIL a `(:newline)' is added to the result."
+  (list* (princ-to-string label) ": " `(:value ,value)
+         (if newline '((:newline)) nil)))
 
 (defmacro label-value-line* (&rest label-values)
   ` (append ,@(loop for (label value) in label-values
                     collect `(label-value-line ,label ,value))))
-
-(defgeneric type-for-emacs (object)
-  (:documentation
-   "Return a type specifier suitable for display in the Emacs inspector.")
-  (:method (object)
-    (type-of object))
-  (:method ((object integer))
-    ;; Some lisps report integer types as (MOD ...), which while nice
-    ;; in a sense doesn't answer the often more immediate question of
-    ;; fixnumness.
-    (if (typep object 'fixnum)
-        'fixnum
-        'bignum)))
-
 
 (definterface describe-primitive-type (object)
   "Return a string describing the primitive type of object."
@@ -1028,3 +1041,37 @@ SPEC can be:
      when (funcall matchp prefix name)
      collect name))
 
+
+(defparameter *type-specifier-arglists*
+  '((and                . (&rest type-specifiers))
+    (array              . (&optional element-type dimension-spec))
+    (base-string        . (&optional size))
+    (bit-vector         . (&optional size))
+    (complex            . (&optional type-specifier))
+    (cons               . (&optional car-typespec cdr-typespec))
+    (double-float       . (&optional lower-limit upper-limit))
+    (eql                . (object))
+    (float              . (&optional lower-limit upper-limit))
+    (function           . (&optional arg-typespec value-typespec))
+    (integer            . (&optional lower-limit upper-limit))
+    (long-float         . (&optional lower-limit upper-limit))
+    (member             . (&rest eql-objects))
+    (mod                . (n))
+    (not                . (type-specifier))
+    (or                 . (&rest type-specifiers))
+    (rational           . (&optional lower-limit upper-limit))
+    (real               . (&optional lower-limit upper-limit))
+    (satisfies          . (predicate-symbol))
+    (short-float        . (&optional lower-limit upper-limit))
+    (signed-byte        . (&optional size))
+    (simple-array       . (&optional element-type dimension-spec))
+    (simple-base-string . (&optional size))
+    (simple-bit-vector  . (&optional size))
+    (simple-string      . (&optional size))
+    (single-float       . (&optional lower-limit upper-limit))
+    (simple-vector      . (&optional size))
+    (string             . (&optional size))
+    (unsigned-byte      . (&optional size))
+    (values             . (&rest typespecs))
+    (vector             . (&optional element-type size))
+    ))

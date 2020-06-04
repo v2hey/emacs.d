@@ -5,8 +5,8 @@
 ;; Authors: Dmitry Galinsky <dima dot exe at gmail dot com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-helper-minor-mode.el $
-;; $Id: rails-helper-minor-mode.el 112 2007-03-24 22:34:38Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-helper-minor-mode.el $
+;; $Id: rails-helper-minor-mode.el 158 2007-04-03 08:45:46Z dimaexe $
 
 ;;; License
 
@@ -28,10 +28,9 @@
 
 (define-minor-mode rails-helper-minor-mode
   "Minor mode for RubyOnRails helpers."
-  nil
-  " helper"
-  nil
-  (setq rails-primary-switch-func (lambda() (interactive) (rails-controller-layout:switch-to :controller)))
+  :lighter " Helper"
+  :keymap (rails-controller-layout:keymap :helper)
+  (setq rails-primary-switch-func 'rails-controller-layout:switch-to-controller)
   (setq rails-secondary-switch-func 'rails-controller-layout:menu))
 
 (provide 'rails-helper-minor-mode)

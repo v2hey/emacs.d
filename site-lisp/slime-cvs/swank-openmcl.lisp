@@ -105,7 +105,8 @@
    openmcl-mop:slot-definition-type
    openmcl-mop:slot-definition-readers
    openmcl-mop:slot-definition-writers
-   openmcl-mop:slot-boundp-using-class))
+   openmcl-mop:slot-boundp-using-class
+   openmcl-mop:slot-makunbound-using-class))
 
 (defun specializer-name (spec)
   (etypecase spec
@@ -166,10 +167,28 @@
 (defimplementation close-socket (socket)
   (close socket))
 
-(defimplementation accept-connection (socket
-                                      &key external-format buffering timeout)
-  (declare (ignore buffering timeout external-format))
+(defimplementation accept-connection (socket &key external-format
+                                             buffering timeout)
+  (declare (ignore buffering timeout
+                   #-openmcl-unicode-strings external-format))
+  #+openmcl-unicode-strings
+  (when external-format
+    (let ((keys (ccl::socket-keys socket)))
+      (setf (getf keys :external-format) external-format
+            (slot-value socket 'ccl::keys) keys)))
   (ccl:accept-connection socket :wait t))
+
+#+openmcl-unicode-strings
+(defvar *external-format-to-coding-system*
+  '((:iso-8859-1 
+     "latin-1" "latin-1-unix" "iso-latin-1-unix" 
+     "iso-8859-1" "iso-8859-1-unix")
+    (:utf-8 "utf-8" "utf-8-unix")))
+
+#+openmcl-unicode-strings
+(defimplementation find-external-format (coding-system)
+  (car (rassoc-if (lambda (x) (member coding-system x :test #'equal))
+                  *external-format-to-coding-system*)))
 
 (defimplementation emacs-connected ()
   (setq ccl::*interactive-abort-process* ccl::*current-process*))
@@ -320,11 +339,43 @@ condition."
                )))))))
 
 (defun xref-locations (relation name &optional (inverse nil))
-  (loop for xref in (if inverse 
-                        (ccl::get-relation  relation name :wild :exhaustive t)
-                        (ccl::get-relation  relation :wild name :exhaustive t))
-        for function = (ccl::xref-entry-name xref)
-        collect `((function ,function) ,(function-source-location (ccl::xref-entry-name xref)))))
+  (flet ((function-source-location (entry)
+           (multiple-value-bind (info name)
+               (ccl::edit-definition-p
+                (ccl::%db-key-from-xref-entry entry)
+                (if (eql (ccl::xref-entry-type entry)
+                         'macro)
+                    'function
+                    (ccl::xref-entry-type entry)))
+             (cond ((not info)
+                    (list :error
+                          (format nil "No source info available for ~A"
+                                  (ccl::xref-entry-name entry))))
+                   ((typep (caar info) 'ccl::method)
+                    `(:location 
+                      (:file ,(remove-filename-quoting
+                               (namestring (translate-logical-pathname
+                                            (cdr (car info))))))
+                      (:method
+                          ,(princ-to-string (ccl::method-name (caar info)))
+                        ,(mapcar 'princ-to-string
+                                 (mapcar #'specializer-name
+                                         (ccl::method-specializers
+                                          (caar info))))
+                        ,@(mapcar 'princ-to-string
+                                  (ccl::method-qualifiers (caar info))))
+                      nil))
+                   (t
+                    (canonicalize-location (cdr (first info)) name))))))
+    (declare (dynamic-extent #'function-source-location))
+    (loop for xref in (if inverse 
+                          (ccl::get-relation relation name
+                                             :wild :exhaustive t)
+                          (ccl::get-relation relation
+                                             :wild name :exhaustive t))
+       for function = (ccl::xref-entry-name xref)
+       collect `((function ,function)
+                 ,(function-source-location xref)))))
 
 (defimplementation who-binds (name)
   (xref-locations :binds name))
@@ -733,8 +784,7 @@ at least the filename containing it."
 
 ;;;; Inspection
 
-(defclass openmcl-inspector (inspector)
-  ())
+(defclass openmcl-inspector (backend-inspector) ())
 
 (defimplementation make-default-inspector ()
   (make-instance 'openmcl-inspector))
@@ -745,7 +795,7 @@ at least the filename containing it."
 	(string (gethash typecode *value2tag*))
 	(string (nth typecode '(tag-fixnum tag-list tag-misc tag-imm))))))
 
-(defmethod inspect-for-emacs ((o t) (inspector openmcl-inspector))
+(defmethod inspect-for-emacs ((o t) (inspector backend-inspector))
   (declare (ignore inspector))
   (let* ((i (inspector::make-inspector o))
 	 (count (inspector::compute-line-count i))
@@ -764,7 +814,7 @@ at least the filename containing it."
                 (pprint o s)))
             lines)))
 
-(defmethod inspect-for-emacs :around ((o t) (inspector openmcl-inspector))
+(defmethod inspect-for-emacs :around ((o t) (inspector backend-inspector))
   (if (or (uvector-inspector-p o)
           (not (ccl:uvectorp o)))
       (call-next-method)
@@ -784,7 +834,8 @@ at least the filename containing it."
   (:method ((object t)) nil)
   (:method ((object uvector-inspector)) t))
 
-(defmethod inspect-for-emacs ((uv uvector-inspector) (inspector openmcl-inspector))
+(defmethod inspect-for-emacs ((uv uvector-inspector) 
+                              (inspector backend-inspector))
   (with-slots (object)
       uv
     (values (format nil "The UVECTOR for ~S." object)
@@ -931,4 +982,4 @@ out IDs for.")
   (apply #'make-hash-table :weak :value args))
 
 (defimplementation hash-table-weakness (hashtable)
-  (ccl::hash-table-weak-p ht))
+  (ccl::hash-table-weak-p hashtable))

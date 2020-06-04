@@ -7,8 +7,8 @@
 ;;          Howard Yeh <hayeah at gmail dot com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-lib.el $
-;; $Id: rails-lib.el 132 2007-03-27 12:01:43Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-lib.el $
+;; $Id: rails-lib.el 223 2008-02-11 20:32:03Z dimaexe $
 
 ;;; License
 
@@ -73,6 +73,15 @@ If EXPR is not nil exeutes BODY.
 
 ;; Strings
 
+(defun string-repeat (char num)
+  (let ((len num)
+        (str ""))
+  (while (not (zerop len))
+    (setq len (- len 1))
+    (setq str (concat char str)))
+  str))
+
+
 (defmacro string=~ (regex string &rest body)
   "regex matching similar to the =~ operator found in other languages."
   (let ((str (gensym)))
@@ -92,6 +101,16 @@ If EXPR is not nil exeutes BODY.
                                ;;after
                                ($a (substring ,str (match-end 0) (length ,str))))
                ,@body)))))))
+
+(defun decamelize (string)
+  "Convert from CamelCaseString to camel_case_string."
+  (let ((case-fold-search nil))
+    (downcase
+     (replace-regexp-in-string
+      "\\([A-Z]+\\)\\([A-Z][a-z]\\)" "\\1_\\2"
+      (replace-regexp-in-string
+       "\\([a-z\\d]\\)\\([A-Z]\\)" "\\1_\\2"
+       string)))))
 
 (defun string-not-empty (str) ;(+)
   "Return t if string STR is not empty."
@@ -127,10 +146,12 @@ BlaPostfix -> Bla."
   "Join all STRINGS using a SEPARATOR."
   (mapconcat 'identity strings separator))
 
+(defalias 'string-join 'strings-join)
+
 (defun capital-word-p (word)
   "Return t if first letter of WORD is uppercased."
-  (and (>= (elt word 0) 65)
-       (<= (elt word 0) 90)))
+  (= (elt word 0)
+     (elt (capitalize word) 0)))
 
 ;;;;;;;; def-snips stuff ;;;;
 
@@ -241,6 +262,15 @@ it."
   "Return the parent directory of a file named FILE-NAME."
   (replace-regexp-in-string "[^/]*$" "" file-name))
 
+(defmacro* in-directory ((directory) &rest body)
+  (let ((before-directory (gensym)))
+  `(let ((,before-directory default-directory)
+         (default-directory ,directory))
+       (cd ,directory)
+       ,@body
+       (cd ,before-directory))))
+
+
 ;; Buffers
 
 (defun buffer-string-by-name (buffer-name)
@@ -270,41 +300,6 @@ the user explicit sets `rails-use-alternative-browse-url'."
       (w32-shell-execute "open" "iexplore" url)
     (browse-url url args)))
 
-;; snippets related
-
-(defmacro compile-snippet(expand)
-  `(lambda () (interactive) (snippet-insert ,(symbol-value expand))))
-
-(defun create-snippets-and-menumap-from-dsl (body &optional path menu keymap abbrev-table)
-  (unless path (setq path (list)))
-  (unless menu (setq menu (list)))
-  (unless abbrev-table (setq abbrev-table (list)))
-  (unless keymap (setq keymap (make-sparse-keymap "Snippets")))
-  (dolist (tail body)
-    (let ((p path)
-          (a (nth 0 tail))
-          (b (nth 1 tail))
-          (c (cddr tail))
-          (abbr abbrev-table))
-      (if (eq a :m)
-          (progn
-            (while (not (listp (car c)))
-              (add-to-list 'abbr (car c))
-              (setq c (cdr c)))
-            (add-to-list 'p b t)
-            (define-key keymap
-              (vconcat (mapcar #'make-symbol p))
-              (cons b (make-sparse-keymap b)))
-            (setq keymap (create-snippets-and-menumap-from-dsl c p menu keymap abbr)))
-        (let ((c (car c)))
-          (while (car abbr)
-            (define-abbrev (symbol-value (car abbr)) a "" (compile-snippet b))
-            (setq abbr (cdr abbr)))
-          (define-key keymap
-            (vconcat (mapcar #'make-symbol (add-to-list 'p a t)))
-            (cons (concat a " \t" c) (compile-snippet b)))))))
-  keymap)
-
 ;; abbrev
 ;; from http://www.opensource.apple.com/darwinsource/Current/emacs-59/emacs/lisp/derived.el
 (defun merge-abbrev-tables (old new)
@@ -316,8 +311,12 @@ as the value of the symbol, and the hook as the function definition."
     (mapatoms
      (lambda(it)
        (or (intern-soft (symbol-name it) new)
-           (define-abbrev new (symbol-name it)
-             (symbol-value it) (symbol-function it))))
+           (define-abbrev new
+             (symbol-name it)
+             (symbol-value it)
+             (symbol-function it)
+             nil
+             t)))
      old)))
 
 ;; Colorize
@@ -330,6 +329,22 @@ as the value of the symbol, and the hook as the function definition."
               '(lambda (start end len)
                  (ansi-color-apply-on-region start end)))
     (set-buffer buffer)))
+
+;; completion-read
+(defun rails-completing-read (prompt table history require-match)
+  (let ((history-value (symbol-value history)))
+  (list (completing-read
+         (format "%s?%s: "
+                 prompt
+                 (if (car history-value)
+                     (format " (%s)" (car history-value))
+                   ""))
+         (list->alist table) ; table
+         nil ; predicate
+         require-match ; require-match
+         nil ; initial input
+         history ; hist
+         (car history-value))))) ;def
 
 ;; MMM
 
@@ -407,18 +422,5 @@ as the value of the symbol, and the hook as the function definition."
 
 
 ;; Cross define functions from my rc files
-
-(unless (fboundp 'indent-or-complete)
-  (defun indent-or-complete ()
-    "Complete if point is at end of a word, otherwise indent line."
-    (interactive)
-    (if (and (boundp 'snippet)
-             snippet)
-        (snippet-next-field)
-      (if (looking-at "\\>")
-          (progn
-            (hippie-expand nil)
-            (message ""))
-        (indent-for-tab-command)))))
 
 (provide 'rails-lib)

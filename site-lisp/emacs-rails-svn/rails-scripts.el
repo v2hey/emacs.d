@@ -6,8 +6,8 @@
 ;;          Rezikov Peter <crazypit13 (at) gmail.com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-scripts.el $
-;; $Id: rails-scripts.el 133 2007-03-27 14:59:21Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-scripts.el $
+;; $Id: rails-scripts.el 221 2008-02-06 23:44:57Z dimaexe $
 
 ;;; License
 
@@ -44,49 +44,53 @@ For example -s to keep existing files and -c to add new files into svn.")
   "Add parameters to script/destroy.
 For example -c to remove files from svn.")
 
-(defvar rails-script:buffer-name "*Rails Script Output*")
+(defvar rails-script:buffer-name "*ROutput*")
+
 (defvar rails-script:running-script-name nil
   "Curently running the script name")
 
+(defvar rails-script:history (list))
+(defvar rails-script:history-of-generate (list))
+(defvar rails-script:history-of-destroy (list))
+
 ;; output-mode
 
-(defconst rails-script:output-mode-font-lock-ketwords
+(defconst rails-script:font-lock-ketwords
   (list
+   '("^\\(\(in [^\)]+\)\\)$"               1 font-lock-builtin-face)
    '(" \\(rm\\|rmdir\\) "                  1 font-lock-warning-face)
-   '(" \\(missing\\|notempty\\|exists\\) " 1 font-lock-constant-face)
+   '(" \\(missing\\|notempty\\|exists\\) " 1 font-lock-warning-face)
    '(" \\(create\\|dependency\\) "         1 font-lock-function-name-face)))
 
-(defconst rails-script:output-mode-link-regexp
+(defconst rails-script:button-regexp
   " \\(create\\) + \\([^ ]+\\.\\w+\\)")
 
-(defvar rails-script:popup-buffer-after-stop-if-success t)
 (defvar rails-script:output-mode-ret-value nil)
-(defvar rails-script:output-mode-after-stop-hook nil)
+(defvar rails-script:run-after-stop-hook nil)
+(defvar rails-script:show-buffer-hook nil)
 
-(defun rails-script:output-mode-make-links (start end len)
+(defun rails-script:make-buttons (start end len)
   (save-excursion
     (let ((buffer-read-only nil))
       (goto-char start)
-      (while (re-search-forward rails-script:output-mode-link-regexp end t)
+      (while (re-search-forward rails-script:button-regexp end t)
         (make-button (match-beginning 2) (match-end 2)
                      :type 'rails-button
                      :rails:file-name (match-string 2))))))
 
-(defun rails-script:output-mode-popup-buffer ()
-  (let* ((ret-val rails-script:output-mode-ret-value)
-         (ret-val (if ret-val ret-val 0))
-         (popup-if-success rails-script:popup-buffer-after-stop-if-success))
-    (when (and (if popup-if-success t (not (zerop ret-val)))
-               (not (get-buffer-process rails-script:buffer-name))
-               (not (buffer-visible-p rails-script:buffer-name)))
-      (display-buffer rails-script:buffer-name t))
-    (let ((win (get-buffer-window-list rails-script:buffer-name)))
-      (when win
-        (mapcar #'(lambda(w)(set-window-point w 0)) win)
-        (shrink-window-if-larger-than-buffer
-         (get-buffer-window rails-script:buffer-name))))))
+(defun rails-script:popup-buffer (&optional do-not-scroll-to-top)
+  "Popup output buffer."
+  (unless (buffer-visible-p rails-script:buffer-name)
+    (display-buffer rails-script:buffer-name t))
+  (let ((win (get-buffer-window-list rails-script:buffer-name)))
+    (when win
+      (unless do-not-scroll-to-top
+        (mapcar #'(lambda(w) (set-window-point w 0)) win))
+      (shrink-window-if-larger-than-buffer
+       (get-buffer-window rails-script:buffer-name))
+      (run-hooks 'rails-script:show-buffer-hook))))
 
-(defun rails-script:output-mode-push-first-button ()
+(defun rails-script:push-first-button ()
   (let (file-name)
     (with-current-buffer (get-buffer rails-script:buffer-name)
       (let ((button (next-button 1)))
@@ -95,23 +99,41 @@ For example -c to remove files from svn.")
     (when file-name
       (rails-core:find-file-if-exist file-name))))
 
-(define-derived-mode rails-script:output-mode fundamental-mode "Rails Script Output"
-  "Major mode to Rails Script Output."
+(defun rails-script:toggle-output-window ()
+  (interactive)
+  (let ((current (current-buffer))
+        (buf (get-buffer rails-script:buffer-name)))
+    (if buf
+      (if (buffer-visible-p rails-script:buffer-name)
+          (delete-windows-on buf)
+        (progn
+          (pop-to-buffer rails-script:buffer-name t t)
+          (pop-to-buffer current t t)
+          (shrink-window-if-larger-than-buffer
+           (get-buffer-window rails-script:buffer-name))
+          (run-hooks 'rails-script:show-buffer-hook)))
+      (message "No output window found. Try running a script or a rake task before."))))
+
+(defun rails-script:setup-output-buffer ()
+  "Setup default variables and values for the output buffer."
   (set (make-local-variable 'font-lock-keywords-only) t)
-  (set (make-local-variable 'font-lock-defaults)
-       '((rails-script:output-mode-font-lock-ketwords) nil t))
-  (buffer-disable-undo)
-  (rails-script:output-mode-make-links (point-min) (point-max) (point-max))
-  (setq buffer-read-only t)
-  (set (make-local-variable 'rails-script:popup-buffer-after-stop-if-success) t)
+  (make-local-variable 'font-lock-defaults)
   (set (make-local-variable 'scroll-margin) 0)
   (set (make-local-variable 'scroll-preserve-screen-position) nil)
-  (make-local-hook 'rails-script:output-mode-after-stop-hook)
-  (add-hook 'rails-script:output-mode-after-stop-hook 'rails-script:output-mode-popup-buffer t t)
-  (add-hook 'rails-script:output-mode-after-stop-hook 'rails-script:output-mode-push-first-button t t)
   (make-local-variable 'after-change-functions)
-  (add-hook 'after-change-functions 'rails-script:output-mode-make-links)
   (rails-minor-mode t))
+
+(define-derived-mode rails-script:output-mode fundamental-mode "ROutput"
+  "Major mode to Rails Script Output."
+  (rails-script:setup-output-buffer)
+  (setq font-lock-defaults '((rails-script:font-lock-ketwords) nil t))
+  (buffer-disable-undo)
+  (setq buffer-read-only t)
+  (rails-script:make-buttons (point-min) (point-max) (point-max))
+  (add-hook 'rails-script:run-after-stop-hook 'rails-script:popup-buffer t t)
+  (add-hook 'rails-script:run-after-stop-hook 'rails-script:push-first-button t t)
+  (add-hook 'after-change-functions 'rails-script:make-buttons nil t)
+  (run-hooks 'rails-script:output-mode-hook))
 
 (defun rails-script:running-p ()
   (get-buffer-process rails-script:buffer-name))
@@ -128,15 +150,16 @@ For example -c to remove files from svn.")
             msg (format "%s was stopped (%s)." name ret-message)))
     (message (replace-regexp-in-string "\n" "" msg))
     (with-current-buffer buf
-      (run-hooks 'rails-script:output-mode-after-stop-hook))))
+      (run-hooks 'rails-script:run-after-stop-hook))))
 
 (defun rails-script:run (command parameters &optional buffer-major-mode)
   "Run a Rails script COMMAND with PARAMETERS with
 BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
   (unless (listp parameters)
     (error "rails-script:run PARAMETERS must be the list"))
-  (rails-core:with-root
+  (rails-project:with-root
    (root)
+   (save-some-buffers)
    (let ((proc (rails-script:running-p)))
      (if proc
          (message "Only one instance rails-script allowed")
@@ -151,7 +174,8 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
              (kill-region (point-min) (point-max)))
            (if buffer-major-mode
                (apply buffer-major-mode (list))
-             (rails-script:output-mode)))
+             (rails-script:output-mode))
+           (add-hook 'after-change-functions 'rails-cmd-proxy:convert-buffer-from-remote nil t))
          (set-process-coding-system proc 'utf-8-dos 'utf-8-dos)
          (set-process-sentinel proc 'rails-script:sentinel-proc)
          (setq rails-script:running-script-name
@@ -169,10 +193,12 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
                             parameters
                             rails-script:destroy-params-list)))
 
-(defun rails-script:destroy (&optional what)
+(defun rails-script:destroy (what)
   "Run destroy WHAT"
-  (interactive (list (completing-read "What destroy? (use autocomplete): " rails-script:destroy-list)))
-  (let ((name (intern (concat "rails-script:destroy-" what))))
+  (interactive (rails-completing-read "What destroy" rails-script:destroy-list
+                                      'rails-script:history-of-destroy nil))
+  (let ((name (intern (concat "rails-script:destroy-"
+                              (replace-regexp-in-string "_" "-" what)))))
     (when (fboundp name)
       (call-interactively name))))
 
@@ -181,7 +207,9 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
         (param (intern (concat name "-name"))))
     `(defun ,func (&optional ,param)
        (interactive
-        (list (completing-read ,(concat "Destroy " name ": ")
+        (list (completing-read ,(concat "Destroy "
+                                        (replace-regexp-in-string "[^a-z0-9]" " " name)
+                                        ": ")
                                ,(if completion
                                     `(list->alist
                                       ,(if completion-arg
@@ -189,7 +217,7 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
                                          `(,completion)))
                                   nil))))
        (when (string-not-empty ,param)
-         (rails-script:run-destroy ,name ,param)))))
+         (rails-script:run-destroy ,(replace-regexp-in-string "-" "_" name) ,param)))))
 
 (rails-script:gen-destroy-function "controller" rails-core:controllers t)
 (rails-script:gen-destroy-function "model"      rails-core:models)
@@ -209,10 +237,12 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
                             parameters
                             rails-script:generate-params-list)))
 
-(defun rails-script:generate (&optional what)
+(defun rails-script:generate (what)
   "Run generate WHAT"
-  (interactive (list (completing-read "What generate? (use autocomplete): " rails-script:generators-list)))
-  (let ((name (intern (concat "rails-script:generate-" what))))
+  (interactive (rails-completing-read "What generate" rails-script:generators-list
+                                      'rails-script:history-of-generate nil))
+  (let ((name (intern (concat "rails-script:generate-"
+                              (replace-regexp-in-string "_" "-" what)))))
     (when (fboundp name)
       (call-interactively name))))
 
@@ -221,7 +251,9 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
         (param (intern (concat name "-name"))))
     `(defun ,func (&optional ,param)
        (interactive
-        (list (completing-read ,(concat "Generate " name ": ")
+        (list (completing-read ,(concat "Generate "
+                                        (replace-regexp-in-string "[^a-z0-9]" " " name)
+                                        ": ")
                                ,(if completion
                                     `(list->alist
                                       ,(if completion-arg
@@ -229,7 +261,7 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
                                          `(,completion)))
                                   nil))))
        (when (string-not-empty ,param)
-         (rails-script:run-generate ,name ,param)))))
+         (rails-script:run-generate ,(replace-regexp-in-string "-" "_" name) ,param)))))
 
 (defun rails-script:generate-controller (&optional controller-name actions)
   "Generate a controller and open the controller file."
@@ -263,24 +295,30 @@ BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
   (interactive "FNew Rails project directory: ")
   (make-directory dir t)
   (let ((default-directory (concat (expand-file-name dir) "/")))
-    (flet ((rails-core:root () default-directory))
-      (rails-script:run "rails" (list "--skip" (rails-core:root))))))
+    (flet ((rails-project:root () default-directory))
+      (rails-script:run "rails" (list "--skip" (rails-project:root))))))
 
 ;;;;;;;;;; Shells ;;;;;;;;;;
 
-(defun rails-script:run-interactive (name script)
+(defun rails-script:run-interactive (name script &optional params)
   "Run an interactive shell with SCRIPT in a buffer named
 *rails-<project-name>-<name>*."
-  (rails-core:with-root
+  (rails-project:with-root
    (root)
-   (run-ruby-in-buffer (rails-core:file script)
-                       (format "rails-%s-%s" (rails-core:project-name) name))
+   (let ((buffer-name (format "rails-%s-%s" (rails-project:name) name))
+         (script (rails-core:file script)))
+     (run-ruby-in-buffer buffer-name
+                         script
+                         params)
+     (setq ruby-buffer buffer-name))
    (rails-minor-mode t)))
 
 (defun rails-script:console ()
   "Run script/console."
   (interactive)
-  (rails-script:run-interactive "console" "script/console"))
+  (rails-script:run-interactive (format "console at (%s)" rails-default-environment)
+                                "script/console"
+                                 rails-default-environment))
 
 (defun rails-script:breakpointer ()
   "Run script/breakpointer."

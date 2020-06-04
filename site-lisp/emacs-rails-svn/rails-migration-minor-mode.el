@@ -5,8 +5,8 @@
 ;; Authors: Dmitry Galinsky <dima dot exe at gmail dot com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-migration-minor-mode.el $
-;; $Id: rails-migration-minor-mode.el 130 2007-03-26 20:35:02Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-migration-minor-mode.el $
+;; $Id: rails-migration-minor-mode.el 158 2007-04-03 08:45:46Z dimaexe $
 
 ;;; License
 
@@ -28,9 +28,8 @@
 
 (define-minor-mode rails-migration-minor-mode
   "Minor mode for RubyOnRails migrations."
-  nil
-  " migration"
-  nil
+  :lighter " Migration"
+  :keymap (rails-model-layout:keymap :migration)
   (setq rails-primary-switch-func nil)
   (setq rails-secondary-switch-func 'rails-model-layout:menu))
 

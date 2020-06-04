@@ -6,8 +6,8 @@
 ;;          Rezikov Peter <crazypit13 (at) gmail.com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-core.el $
-;; $Id: rails-core.el 133 2007-03-27 14:59:21Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-core.el $
+;; $Id: rails-core.el 224 2008-02-15 19:33:10Z dimaexe $
 
 ;;; License
 
@@ -27,45 +27,6 @@
 
 (eval-when-compile
   (require 'rails-lib))
-
-(defun rails-core:root ()
-  "Return RAILS_ROOT if this file is a part of a Rails application,
-else return nil"
-  (let ((curdir default-directory)
-        (max 10)
-        (found nil))
-    (while (and (not found) (> max 0))
-      (progn
-        (if (file-exists-p (concat curdir "config/environment.rb"))
-            (progn
-              (setq found t))
-          (progn
-            (setq curdir (concat curdir "../"))
-            (setq max (- max 1))))))
-    (if found (expand-file-name curdir))))
-
-(defmacro* rails-core:with-root ((root) &body body)
-  "If you use `rails-core:root' or functions related on it
-several times in a block of code, you can optimize your code by
-using this macro. Also, blocks of code will be executed only if
-rails-root exist.
- (rails-core:with-root (root)
-    (foo root)
-    (bar (rails-core:file \"some/path\")))
- "
- `(let ((,root (rails-core:root)))
-    (when ,root
-      (flet ((rails-core:root () ,root))
-        ,@body))))
-
-(defmacro rails-core:in-root (&rest body)
-  "Set the default directory to the Rails root directory while
-BODY is executed."
-  (let ((root (gensym)))
-    `(rails-core:with-root
-      (,root)
-      (let ((default-dir ,root))
-        ,@body))))
 
 (defvar rails-core:class-dirs
   '("app/controllers"
@@ -92,25 +53,16 @@ BODY is executed."
      " " ""
      (replace-regexp-in-string
       "  " "::"
-      (capitalize path)))))
+      (if (string-match "^ *\\([0-9]+ *\\)?[A-Z]" path)
+          path
+        (capitalize path))))))
 
 (defun rails-core:file-by-class (classname &optional do-not-append-ext)
   "Return the filename associated with CLASSNAME.
 If the optional parameter DO-NOT-APPEND-EXT is set this function
 will not append \".rb\" to result."
-  (let* ((case-fold-search nil)
-         (path (replace-regexp-in-string "::" "/" classname))
-         (path (replace-regexp-in-string "\\([A-Z]+\\)\\([A-Z][a-z]\\)" "\\1_\\2" path))
-         (path (replace-regexp-in-string "\\([a-z\\d]\\)\\([A-Z]\\)" "\\1_\\2" path)))
-    (concat (downcase path)
-            (unless do-not-append-ext ".rb"))))
-
-;;;;;;;;;; Project ;;;;;;;;;;
-
-(defun rails-core:project-name ()
-  "Return the name of current Rails project."
-  (replace-regexp-in-string "^.*/\\(.*\\)/$" "\\1"
-          (directory-name (rails-core:root))))
+  (concat (decamelize (replace-regexp-in-string "::" "/" classname))
+          (unless do-not-append-ext ".rb")))
 
 ;;;;;;;;;; Files ;;;;;;;;;;
 
@@ -119,8 +71,8 @@ will not append \".rb\" to result."
   (when file-name
     (if (file-name-absolute-p file-name)
         file-name
-      (when-bind
-       (root (rails-core:root))
+      (rails-project:with-root
+       (root)
        (concat root file-name)))))
 
 (defun rails-core:quoted-file (file-name)
@@ -143,56 +95,123 @@ will not append \".rb\" to result."
 it does not exist, ask to create it using QUESTION as a prompt."
   (find-or-ask-to-create question (rails-core:file file)))
 
+(defun rails-core:strip-namespace (class-name)
+  "Strip namespace of CLASS-NAME, eg Foo::Bar -> Bar."
+  (let ((name-list (split-string class-name "::")))
+    (car (last name-list))))
+
 ;; Funtions, that retrun Rails objects full pathes
 
 (defun rails-core:model-file (model-name)
   "Return the model file from the model name."
-  (concat "app/models/" (rails-core:file-by-class model-name)))
+  (when model-name
+    (let* ((stripped-model-file
+            (rails-core:file-by-class
+             (rails-core:strip-namespace model-name)))
+           (model-file
+            (rails-core:file-by-class model-name)))
+      (cond
+       ((file-exists-p
+         (rails-core:file (concat "app/models/" model-file)))
+        (concat "app/models/" model-file))
+       ((file-exists-p
+         (rails-core:file (concat "app/models/" stripped-model-file)))
+        (concat "app/models/" stripped-model-file))
+       (t nil)))))
 
 (defun rails-core:model-exist-p (model-name)
-  "Return t if controller CONTROLLER-NAME exist."
-  (and (file-exists-p
-        (rails-core:file
-         (rails-core:model-file model-name)))
-       (not (rails-core:observer-p model-name))
-       (not (rails-core:mailer-p model-name))))
+  "Return t if model MODEL-NAME exist."
+  (let ((model-file (rails-core:model-file model-name)))
+    (when model-file
+      (and (file-exists-p (rails-core:file model-file))
+           (not (rails-core:observer-p model-name))
+           (not (rails-core:mailer-p model-name))))))
 
 (defun rails-core:controller-file (controller-name)
   "Return the path to the controller CONTROLLER-NAME."
-  (concat "app/controllers/"
-    (rails-core:file-by-class
-     (rails-core:short-controller-name controller-name) t)
-    (unless (string-equal controller-name "Application") "_controller")
-    ".rb"))
+  (when controller-name
+    (concat "app/controllers/"
+            (rails-core:file-by-class
+             (rails-core:short-controller-name controller-name) t)
+            (unless (string-equal controller-name "Application") "_controller")
+            ".rb")))
 
 (defun rails-core:controller-exist-p (controller-name)
   "Return t if controller CONTROLLER-NAME exist."
-  (file-exists-p
-   (rails-core:file
-    (rails-core:controller-file controller-name))))
+  (when controller-name
+    (file-exists-p
+     (rails-core:file
+      (rails-core:controller-file controller-name)))))
+
+(defun rails-core:controller-file-by-model (model)
+  (when model
+    (let* ((controller (pluralize-string model)))
+           ;(controller (when controller (capitalize controller))))
+      (setq controller
+            (cond
+             ((rails-core:controller-exist-p controller) controller) ;; pluralized
+             ((rails-core:controller-exist-p model) model) ;; singularized
+             (t (let ((controllers (rails-core:controllers t)))
+                  (cond
+                   ;; with namespace
+                   ((find
+                     (list controller model)
+                     controllers
+                     :test #'(lambda(x y)
+                               (or
+                                (string= (car x) (rails-core:strip-namespace y))
+                                (string= (cadr x) (rails-core:strip-namespace y)))))))))))
+      (when controller
+        (rails-core:controller-file controller)))))
 
 (defun rails-core:observer-file (observer-name)
   "Return the path to the observer OBSERVER-NAME."
-  (rails-core:model-file (concat observer-name "Observer")))
+  (when observer-name
+    (rails-core:model-file (concat observer-name "Observer"))))
 
-(defalias 'rails-core:mailer-file 'rails-core:model-file
-  "Return the path to the observer MAILER-NAME.")
+(defun rails-core:mailer-file (mailer)
+  (when (and mailer
+             (rails-core:mailer-p mailer))
+    (rails-core:model-file mailer)))
+
+(defun rails-core:mailer-exist-p (mailer)
+  (when mailer
+    (file-exists-p (rails-core:file (rails-core:mailer-file mailer)))))
 
 (defun rails-core:migration-file (migration-name)
   "Return the model file from the MIGRATION-NAME."
-  (let ((dir "db/migrate/")
-        (name (replace-regexp-in-string
-               " " "_"
-               (rails-core:file-by-class migration-name))))
-    (when (string-match "^[^0-9]+[^_]" name) ; try search when the name without migration number
-      (let ((files (directory-files (rails-core:file dir)
-                                    nil
-                                    (concat "[0-9]+_" name "$"))))
-        (setq name (if files
-                       (car files)
-                     nil))))
-    (when name
-      (concat dir name))))
+  (when migration-name
+    (let ((dir "db/migrate/")
+          (name (replace-regexp-in-string
+                 " " "_"
+                 (rails-core:file-by-class migration-name))))
+      (when (string-match "^[^0-9]+[^_]" name) ; try search when the name without migration number
+        (let ((files (directory-files (rails-core:file dir)
+                                      nil
+                                      (concat "[0-9]+_" name "$"))))
+          (setq name (if files
+                         (car files)
+                       nil))))
+      (when name
+        (concat dir name)))))
+
+(defun rails-core:migration-file-by-model (model)
+  (when model
+    (rails-core:migration-file
+     (concat "Create" (rails-core:class-by-file (pluralize-string model))))))
+
+(defun rails-core:model-by-migration-filename (migration-filename)
+  (when migration-filename
+    (let ((model-name (singularize-string
+                       (string=~ "[0-9]+_create_\\(\\w+\\)\.rb" (buffer-name) $1))))
+      (when (and model-name
+                 (rails-core:model-exist-p model-name))
+        model-name))))
+
+(defun rails-core:configuration-file (file)
+  "Return the path to the configuration FILE."
+  (when file
+    (concat "config/" file)))
 
 (defun rails-core:plugin-file (plugin file)
   "Return the path to the FILE in Rails PLUGIN."
@@ -204,7 +223,7 @@ it does not exist, ask to create it using QUESTION as a prompt."
         filename)
     (while (and (car its)
                 (not filename))
-      (when (file-exists-p (format "%sapp/views/layouts/%s.%s" (rails-core:root) layout (car its)))
+      (when (file-exists-p (format "%sapp/views/layouts/%s.%s" (rails-project:root) layout (car its)))
         (setq filename (format "app/views/layouts/%s.%s" layout (car its))))
       (setq its (cdr its)))
     filename))
@@ -229,9 +248,12 @@ it does not exist, ask to create it using QUESTION as a prompt."
 (defun rails-core:helper-file (controller)
   "Return the helper file name for the controller named
 CONTROLLER."
-  (format "app/helpers/%s_helper.rb"
-          (replace-regexp-in-string "_controller" ""
-                                    (rails-core:file-by-class controller t))))
+  (if (string= "Test/TestHelper" controller)
+      (rails-core:file (rails-core:file-by-class "Test/TestHelper"))
+    (when controller
+      (format "app/helpers/%s_helper.rb"
+              (replace-regexp-in-string "_controller" ""
+                                        (rails-core:file-by-class controller t))))))
 
 (defun rails-core:functional-test-file (controller)
   "Return the functional test file name for the controller named
@@ -245,13 +267,25 @@ CONTROLLER."
   (when model
     (format "test/unit/%s_test.rb" (rails-core:file-by-class model t))))
 
+(defun rails-core:unit-test-exist-p (model)
+  "Return the unit test file name for the model named MODEL."
+  (let ((test (rails-core:unit-test-file model)))
+    (when test
+      (file-exists-p (rails-core:file test)))))
+
 (defun rails-core:fixture-file (model)
   "Return the fixtures file name for the model named MODEL."
-  (format "test/fixtures/%s.yml" (pluralize-string (rails-core:file-by-class model t))))
+  (when model
+    (format "test/fixtures/%s.yml" (pluralize-string (rails-core:file-by-class model t)))))
+
+(defun rails-core:fixture-exist-p (model)
+  (when model
+    (file-exists-p
+     (rails-core:file (rails-core:fixture-file model)))))
 
 (defun rails-core:views-dir (controller)
   "Return the view directory name for the controller named CONTROLLER."
-  (format "app/views/%s/" (rails-core:file-by-class controller t)))
+  (format "app/views/%s/" (replace-regexp-in-string "_controller" "" (rails-core:file-by-class controller t))))
 
 (defun rails-core:stylesheet-name (name)
   "Return the file name of the stylesheet named NAME."
@@ -282,13 +316,14 @@ CONTROLLER."
 ;;;;;;;;;; Functions that return collection of Rails objects  ;;;;;;;;;;
 (defun rails-core:observer-p (name)
   (when name
-    (if (string-match "\\(Observer\\|_observer\\(\\.rb\\)?\\)$" name)
+    (if (string-match "\\(Observer\\|_observer\\)\\(\\.rb\\)?$" name)
         t nil)))
 
 (defun rails-core:mailer-p (name)
   (when name
-    (if (string-match "\\(Mailer\\|Notifier\\|_mailer\\|_notifier\\(\\.rb\\)?\\)$" name)
+    (if (string-match "\\(Mailer\\|Notifier\\|_mailer\\|_notifier\\)\\(\\.rb\\)?$" name)
         t nil)))
+
 
 (defun rails-core:controllers (&optional cut-contoller-suffix)
   "Return a list of Rails controllers. Remove the '_controller'
@@ -305,6 +340,14 @@ suffix if CUT-CONTOLLER-SUFFIX is non nil."
                       controller))
     (find-recursive-files "\\.rb$" (rails-core:file "app/controllers/")))))
 
+(defun rails-core:functional-tests ()
+  "Return a list of Rails functional tests."
+  (mapcar
+   #'(lambda(it)
+       (remove-postfix (rails-core:class-by-file it)
+                       "ControllerTest"))
+   (find-recursive-files "\\.rb$" (rails-core:file "test/functional/"))))
+
 (defun rails-core:models ()
   "Return a list of Rails models."
   (mapcar
@@ -313,6 +356,14 @@ suffix if CUT-CONTOLLER-SUFFIX is non nil."
     #'(lambda (file) (or (rails-core:observer-p file)
                          (rails-core:mailer-p file)))
     (find-recursive-files "\\.rb$" (rails-core:file "app/models/")))))
+
+(defun rails-core:unit-tests ()
+  "Return a list of Rails functional tests."
+  (mapcar
+   #'(lambda(it)
+       (remove-postfix (rails-core:class-by-file it)
+                       "Test"))
+   (find-recursive-files "\\.rb$" (rails-core:file "test/unit/"))))
 
 (defun rails-core:observers ()
   "Return a list of Rails observers."
@@ -330,11 +381,13 @@ suffix if CUT-CONTOLLER-SUFFIX is non nil."
 
 (defun rails-core:helpers ()
   "Return a list of Rails helpers."
-  (mapcar
-   #'(lambda (helper) (replace-regexp-in-string "Helper$" "" helper))
+  (append
    (mapcar
-    #'rails-core:class-by-file
-    (find-recursive-files "_helper\\.rb$" (rails-core:file "app/helpers/")))))
+    #'(lambda (helper) (replace-regexp-in-string "Helper$" "" helper))
+    (mapcar
+     #'rails-core:class-by-file
+     (find-recursive-files "_helper\\.rb$" (rails-core:file "app/helpers/"))))
+   (list "Test/TestHelper")))
 
 (defun rails-core:migrations (&optional strip-numbers)
   "Return a list of Rails migrations."
@@ -353,6 +406,16 @@ suffix if CUT-CONTOLLER-SUFFIX is non nil."
                 migrations)
       migrations)))
 
+(defun rails-core:migration-versions (&optional with-zero)
+  "Return a list of migtaion versions as the list of strings. If
+second argument WITH-ZERO is present, append the \"000\" version
+of migration."
+  (let ((ver (mapcar
+              #'(lambda(it) (car (split-string it " ")))
+              (rails-core:migrations))))
+    (if with-zero
+        (append ver '("000"))
+      ver)))
 
 (defun rails-core:plugins ()
   "Return a list of Rails plugins."
@@ -380,6 +443,10 @@ suffix if CUT-CONTOLLER-SUFFIX is non nil."
        (replace-regexp-in-string "\\.[^.]+$" "" l))
    (find-recursive-files "\\.yml$" (rails-core:file "test/fixtures/"))))
 
+(defun rails-core:configuration-files ()
+  "Return a files of files from config folder."
+  (find-recursive-files nil (rails-core:file "config/")))
+
 (defun rails-core:regex-for-match-view ()
   "Return a regex to match Rails view templates.
 The file extensions used for views are defined in `rails-templates-list'."
@@ -388,7 +455,7 @@ The file extensions used for views are defined in `rails-templates-list'."
 (defun rails-core:get-view-files (controller-class &optional action)
   "Retun a list containing the view file for CONTROLLER-CLASS#ACTION.
 If the action is nil, return all views for the controller."
-    (rails-core:with-root
+    (rails-project:with-root
      (root)
      (directory-files
       (rails-core:file
@@ -420,26 +487,36 @@ If the action is nil, return all views for the controller."
 
 (defun rails-core:current-controller ()
   "Return the current Rails controller."
-  (let ((file-class (rails-core:class-by-file (buffer-file-name))))
-    (case (rails-core:buffer-type)
-      (:controller (rails-core:short-controller-name file-class))
-      (:view (rails-core:class-by-file
-              (directory-file-name (directory-of-file (buffer-file-name)))))
-      (:mailer file-class)
-      (:helper (remove-postfix file-class "Helper"))
-      (:functional-test (remove-postfix file-class "ControllerTest")))))
+  (let* ((file-class (rails-core:class-by-file (buffer-file-name))))
+    (unless (rails-core:mailer-p file-class)
+      (case (rails-core:buffer-type)
+        (:controller (rails-core:short-controller-name file-class))
+        (:view (rails-core:class-by-file
+                (directory-file-name (directory-of-file (buffer-file-name)))))
+        (:helper (remove-postfix file-class "Helper"))
+        (:functional-test (remove-postfix file-class "ControllerTest"))))))
 
 (defun rails-core:current-model ()
   "Return the current Rails model."
-  (let ((file-class (rails-core:class-by-file (buffer-file-name))))
-    (case (rails-core:buffer-type)
-      (:migration (let ((model-name (singularize-string
-                                     (string=~ "[0-9]+_create_\\(\\w+\\)\.rb" (buffer-name) $1))))
-                    (when (and model-name (rails-core:model-exist-p model-name))
-                      model-name)))
-      (:model file-class)
-      (:unit-test (remove-postfix file-class "Test"))
-      (:fixture (singularize-string file-class)))))
+  (let* ((file-class (rails-core:class-by-file (buffer-file-name))))
+    (unless (rails-core:mailer-p file-class)
+      (case (rails-core:buffer-type)
+        (:migration (rails-core:model-by-migration-filename (buffer-name)))
+        (:model file-class)
+        (:unit-test (remove-postfix file-class "Test"))
+        (:fixture (singularize-string file-class))))))
+
+(defun rails-core:current-mailer ()
+  "Return the current Rails Mailer, else return nil."
+  (let* ((file-class (rails-core:class-by-file (buffer-file-name)))
+         (test (remove-postfix file-class "Test")))
+    (when (or (rails-core:mailer-p file-class)
+              (rails-core:mailer-p test))
+      (case (rails-core:buffer-type)
+        (:mailer    file-class)
+        (:unit-test test)
+        (:view (rails-core:class-by-file
+                (directory-file-name (directory-of-file (buffer-file-name)))))))))
 
 (defun rails-core:current-action ()
   "Return the current action in the current Rails controller."
@@ -468,8 +545,9 @@ If the action is nil, return all views for the controller."
 
 (defun rails-core:buffer-file-match (regexp)
   "Match the current buffer file name to RAILS_ROOT + REGEXP."
-  (string-match (rails-core:file regexp)
-                (buffer-file-name (current-buffer))))
+  (when-bind (file (rails-core:file regexp))
+             (string-match file
+                           (buffer-file-name (current-buffer)))))
 
 (defun rails-core:buffer-type ()
   "Return the type of the current Rails file or nil if the type
@@ -498,12 +576,11 @@ cannot be determinated."
       (when line-number
         (goto-line line-number)))))
 
-
 ;;;;;;;;;; Rails minor mode logs ;;;;;;;;;;
 
 (defun rails-log-add (message)
   "Add MESSAGE to the Rails minor mode log in RAILS_ROOT."
-  (rails-core:with-root
+  (rails-project:with-root
    (root)
    (append-string-to-file (rails-core:file "log/rails-minor-mode.log")
                           (format "%s: %s\n"
@@ -514,7 +591,7 @@ cannot be determinated."
 the Rails minor mode log."
   (shell-command (format "%s %s" rails-ruby-command command) buffer)
   (rails-log-add
-   (format "\n%s> %s\n%s" (rails-core:project-name)
+   (format "\n%s> %s\n%s" (rails-project:name)
            command (buffer-string-by-name buffer))))
 
 ;;;;;;;;;; Rails menu ;;;;;;;;;;
@@ -522,19 +599,59 @@ the Rails minor mode log."
 (defun rails-core:menu-separator ()
   (unless (rails-use-text-menu) 'menu (list "--" "--")))
 
-(defvar rails-core:menu-position
-  (list '(300 50) (selected-window)))
+(if (fboundp 'completion-posn-at-point-as-event)
+    (defun rails-core:menu-position ()
+      (completion-posn-at-point-as-event nil nil nil (+ (frame-char-height) 2)))
+  (defun rails-core:menu-position ()
+    (list '(300 50) (get-buffer-window (current-buffer)))))
 
 (defun rails-core:menu (menu)
   "Show a menu."
   (let ((result
          (if (rails-use-text-menu)
              (tmm-prompt menu)
-           (x-popup-menu rails-core:menu-position
-                         menu))))
+           (x-popup-menu (rails-core:menu-position)
+                         (rails-core:prepare-menu  menu)))))
     (if (listp result)
         (first result)
       result)))
+
+(defvar rails-core:menu-letters-list
+  (let ((res '()))
+    (loop for i from (string-to-char "1") upto (string-to-char "9")
+          do (add-to-list 'res (char-to-string i) t))
+    (loop for i from (string-to-char "a") upto (string-to-char "z")
+          do (add-to-list 'res (char-to-string i) t))
+    res)
+  "List contains 0-9a-z letter")
+
+(defun rails-core:prepare-menu (menu)
+  "Append a prefix to each label of menu-item from MENU."
+  (let ((title (car menu))
+        (menu (cdr menu))
+        (result '())
+        (result-line '())
+        (letter 0))
+    (dolist (line menu)
+      (setq result-line '())
+      (dolist (it line)
+        (typecase it
+          (cons
+           (if (and (string= (car (rails-core:menu-separator)) (car it))
+                    (string= (cadr (rails-core:menu-separator)) (cadr it)))
+               (add-to-list 'result-line it t)
+             (progn
+               (add-to-list 'result-line (cons
+                                          (format "%s) %s"
+                                                  (nth letter rails-core:menu-letters-list)
+                                                  (car it))
+                                          (cdr it))
+                            t)
+               (setq letter (+ 1 letter)))))
+          (t
+           (add-to-list 'result-line it t))))
+      (add-to-list 'result result-line t))
+    (cons title result)))
 
 ;;;;;;;;;; Misc ;;;;;;;;;;
 

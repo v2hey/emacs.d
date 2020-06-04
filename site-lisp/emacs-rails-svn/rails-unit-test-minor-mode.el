@@ -5,8 +5,8 @@
 ;; Authors: Dmitry Galinsky <dima dot exe at gmail dot com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-unit-test-minor-mode.el $
-;; $Id: rails-unit-test-minor-mode.el 133 2007-03-27 14:59:21Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-unit-test-minor-mode.el $
+;; $Id: rails-unit-test-minor-mode.el 166 2007-04-05 17:44:57Z dimaexe $
 
 ;;; License
 
@@ -28,15 +28,16 @@
 
 (define-minor-mode rails-unit-test-minor-mode
   "Minor mode for RubyOnRails unit tests."
-  nil
-  " unit-test"
-  nil
+  :lighter " UTest"
+  :keymap (let ((map (rails-model-layout:keymap :unit-test)))
+            (define-key map rails-minor-mode-test-current-method-key 'rails-test:run-current-method)
+            (define-key map [menu-bar rails-model-layout run] '("Test current method" . rails-test:run-current-method))
+            map)
   (setq rails-primary-switch-func (lambda()
                                     (interactive)
                                     (if (rails-core:mailer-p (rails-core:current-model))
-                                        (rails-model-layout:switch-to :mailer)
-                                      (rails-model-layout:switch-to :model))))
-  (setq rails-secondary-switch-func 'rails-model-layout:menu)
-  (local-set-key (kbd "\C-c .") 'rails-rake:test-current-method))
+                                        (rails-model-layout:switch-to-mailer)
+                                      (rails-model-layout:switch-to-model))))
+  (setq rails-secondary-switch-func 'rails-model-layout:menu))
 
 (provide 'rails-unit-test-minor-mode)

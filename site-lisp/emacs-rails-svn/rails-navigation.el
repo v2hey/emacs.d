@@ -6,8 +6,8 @@
 ;;          Rezikov Peter <crazypit13 (at) gmail.com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-navigation.el $
-;; $Id: rails-navigation.el 130 2007-03-26 20:35:02Z dimaexe $
+;; $URL: http://emacs-rails.rubyforge.org/svn/trunk/rails-navigation.el $
+;; $Id: rails-navigation.el 203 2007-08-04 20:31:07Z dimaexe $
 
 ;;; License
 
@@ -79,6 +79,22 @@
    "Go to model.."
    'rails-core:model-file))
 
+(defun rails-nav:goto-functional-tests ()
+  "Go to functional tests."
+  (interactive)
+  (rails-nav:goto-file-with-menu-from-list
+   (rails-core:functional-tests)
+   "Go to functional test."
+   'rails-core:functional-test-file))
+
+(defun rails-nav:goto-unit-tests ()
+  "Go to functional tests."
+  (interactive)
+  (rails-nav:goto-file-with-menu-from-list
+   (rails-core:unit-tests)
+   "Go to unit test."
+   'rails-core:unit-test-file))
+
 (defun rails-nav:goto-observers ()
   "Go to observers."
   (interactive)
@@ -131,7 +147,7 @@
 (defun rails-nav:goto-layouts ()
   "Go to layouts."
   (interactive)
-  (let ((items (list (cons "--" "--")
+  (let ((items (list (rails-core:menu-separator)
                      (cons "Create new layout" 'rails-nav:create-new-layout))))
     (rails-nav:goto-file-with-menu-from-list
      (rails-core:layouts)
@@ -184,8 +200,8 @@ current line for a series of patterns."
   "Analyze a string (or ERb block) and open some file related with it.
 For example, on a line with \"render :partial\" runing this
 function will open the partial file.  The function works with
-\"layout 'name'\", \"render/redirect-to [:action => 'name',]
-[controller => 'n']\", stylesheet_link_tag and other common
+\"layout 'name'\", \"render/redirect-to [:action => 'name',] [controller => 'n']\",
+stylesheet_link_tag and other common
 patterns.
 
 Rules for actions/controllers:
@@ -193,7 +209,7 @@ Rules for actions/controllers:
  If you in view, the view file related to the action will be opened.
  Use prefix before the command to change this navigation direction."
   (interactive "P")
-  (rails-core:with-root
+  (rails-project:with-root
    (root)
    (save-match-data
      (unless
@@ -204,7 +220,7 @@ Rules for actions/controllers:
                     (current-line-string))))
           (loop for func in rails-on-current-line-gotos
                 until (when (funcall func line prefix) (return t))))
-       (message "Can't switch to some file form this line.")))))
+       (message "Can't switch to some file from this line.")))))
 
 (defvar rails-on-current-line-gotos
   '(rails-line-->partial
