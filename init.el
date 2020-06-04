@@ -77,17 +77,6 @@
 
 
 ;;----------------------------------------------------------------------------
-;; Update time stamps marked with 'Last modified:' in HTML and Text mode
-;;----------------------------------------------------------------------------
-(require 'time-stamp)
-(setq time-stamp-line-limit 0
-      time-stamp-start "^Last modified: "
-      time-stamp-end "$")
-(add-hook 'text-mode-hook
-          (lambda () (add-hook 'write-file-hooks 'time-stamp nil t)))
-
-
-;;----------------------------------------------------------------------------
 ;; Auto line-wrap
 ;;----------------------------------------------------------------------------
 ;(add-hook 'text-mode-hook 'auto-fill-mode)  ;; turns it on even for html-mode
@@ -129,6 +118,9 @@
 (require 'darcsum)
 (setq darcsum-whatsnew-switches "-l")
 
+(require 'grep)
+(add-to-list 'grep-find-ignored-directories "_darcs")
+
 
 ;;----------------------------------------------------------------------------
 ;; Multiple major modes
@@ -168,8 +160,9 @@
 ;;----------------------------------------------------------------------------
 ;; Desktop saving
 ;;----------------------------------------------------------------------------
-;; save a list of open files in ~/.emacs.desktop
+;; save a list of open files in ~/.emacs.d/.emacs.desktop
 ;; save the desktop file automatically if it already exists
+(setq desktop-path '("~/.emacs.d"))
 (setq desktop-save 'if-exists)
 (desktop-save-mode 1)
 
@@ -216,6 +209,7 @@
 
 (and standard-display-table (aset standard-display-table ?\C-i  ; Show tabs highlighted
                                   (vector (+ ?\C-i (* (face-id 'we-hate-tabs-face) 524288) ))))
+(setq show-trailing-whitespace t)
 
 
 ;;----------------------------------------------------------------------------
@@ -251,7 +245,7 @@
 (setq compile-command "rake ")
 
 (mmm-add-classes
- '((eruby :submode ruby-mode :front "<%[=]?" :back  "-?%>")))
+ '((eruby :submode ruby-mode :front "<%=?" :back  "-?%>")))
 
 (mmm-add-mode-ext-class 'html-mode "\\.rhtml$" 'eruby)
 (mmm-add-mode-ext-class 'yaml-mode "\\.yml$" 'eruby)
@@ -392,71 +386,8 @@
 ;;----------------------------------------------------------------------------
 ;; Variables configured via the interactive 'customize' interface
 ;;----------------------------------------------------------------------------
-(custom-set-variables
-  ;; custom-set-variables was added by Custom.
-  ;; If you edit it by hand, you could mess it up, so be careful.
-  ;; Your init file should contain only one such instance.
-  ;; If there is more than one, they won't work right.
- '(auto-compression-mode t nil (jka-compr))
- '(blink-cursor-delay 0)
- '(blink-cursor-interval 0.4)
- '(buffers-menu-max-size 30)
- '(case-fold-search t)
- '(column-number-mode t)
- '(compilation-scroll-output t)
- '(compile-command "make")
- '(current-language-environment "UTF-8")
- '(default-input-method "latin-1-prefix")
- '(desktop-path (quote ("~/.emacs.d" "." "~")))
- '(ecb-compile-window-height 0.2)
- '(ecb-grep-find-function (quote rgrep))
- '(ecb-layout-name "left-dir-plus-speedbar")
- '(ecb-layout-window-sizes (quote (("left-analyse" (0.20297029702970298 . 0.33962264150943394) (0.20297029702970298 . 0.20754716981132076) (0.20297029702970298 . 0.20754716981132076) (0.20297029702970298 . 0.22641509433962265)))))
- '(ecb-options-version "2.33beta1")
- '(ecb-primary-secondary-mouse-buttons (quote mouse-1--C-mouse-1))
- '(ecb-run-ediff-in-ecb-frame nil)
- '(ecb-tip-of-the-day nil)
- '(ecb-wget-setup (quote ("wget" . other)))
- '(ecb-windows-width 0.2)
- '(ediff-window-setup-function (quote ediff-setup-windows-plain))
- '(face-default-stipple "gray3" t)
- '(follow-auto nil)
- '(frame-background-mode nil)
- '(global-font-lock-mode t nil (font-lock))
- '(global-hl-line-mode nil)
- '(grep-find-ignored-directories (quote ("CVS" ".hg" "{arch}" ".svn" "_darcs")))
- '(highlight-changes-global-changes-existing-buffers t)
- '(highlight-changes-global-initial-state (quote active))
- '(ibuffer-enable t)
- '(indent-tabs-mode nil)
- '(inhibit-splash-screen t)
- '(make-backup-files nil)
- '(mouse-yank-at-point t)
- '(recentf-exclude (quote ("/tmp/")))
- '(recentf-mode t)
- '(ruby-electric-expand-delimiters-list nil)
- '(show-paren-mode t)
- '(show-trailing-whitespace t)
- '(slime-autodoc-mode t t)
- '(speedbar-directory-unshown-regexp "^\\(CVS\\|RCS\\|SCCS\\|\\.svn\\|_darcs\\)\\'")
- '(speedbar-show-unknown-files t)
- '(speedbar-use-images nil)
- '(time-stamp-active t)
- '(time-stamp-format "%3a %3b %2d %02H:%02M:%02S %Z %:y")
- '(tooltip-delay 1.5)
- '(tooltip-mode t nil (tooltip))
- '(truncate-lines t)
- '(uniquify-buffer-name-style nil nil (uniquify))
- '(visible-bell t)
- '(whitespace-check-indent-whitespace t))
-(custom-set-faces
-  ;; custom-set-faces was added by Custom.
-  ;; If you edit it by hand, you could mess it up, so be careful.
-  ;; Your init file should contain only one such instance.
-  ;; If there is more than one, they won't work right.
- '(default ((t (:background "black" :foreground "white"))))
- '(cursor ((t (:background "white" :inverse-video t))))
- '(highlight-changes ((((min-colors 88) (class color)) (:stipple nil :background "#1E1E1E")))))
+(setq custom-file "~/.emacs.d/custom.el")
+(load custom-file)
 
 
 ;;----------------------------------------------------------------------------
