@@ -1,13 +1,13 @@
 ;;; rails-scripts.el --- emacs-rails integraions with rails script/* scripts
 
-;; Copyright (C) 2006 Galinsky Dmitry <dima dot exe at gmail dot com>
+;; Copyright (C) 2006 Dmitry Galinsky <dima dot exe at gmail dot com>
 
-;; Authors: Galinsky Dmitry <dima dot exe at gmail dot com>,
+;; Authors: Dmitry Galinsky <dima dot exe at gmail dot com>,
 ;;          Rezikov Peter <crazypit13 (at) gmail.com>
 
 ;; Keywords: ruby rails languages oop
-;; $URL: svn+ssh://crazypit@rubyforge.org/var/svn/emacs-rails/trunk/rails-core.el $
-;; $Id: rails-navigation.el 23 2006-03-27 21:35:16Z crazypit $
+;; $URL: svn://rubyforge.org/var/svn/emacs-rails/trunk/rails-scripts.el $
+;; $Id: rails-scripts.el 133 2007-03-27 14:59:21Z dimaexe $
 
 ;;; License
 
@@ -25,178 +25,266 @@
 ;; along with this program; if not, write to the Free Software
 ;; Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
-(defvar rails-generation-buffer-name "*RailsGeneration*")
+(eval-when-compile
+  (require 'inf-ruby)
+  (require 'ruby-mode))
 
+(defvar rails-script:generators-list
+  '("controller" "model" "scaffold" "migration" "plugin" "mailer" "observer" "resource"))
 
-(defun rails-run-script (script buffer parameters &optional message-format)
-  "Run rails script with ``parameters'' in ``buffer''"
+(defvar rails-script:destroy-list rails-script:generators-list)
+
+(defvar rails-script:generate-params-list
+  '("-f")
+  "Add parameters to script/generate.
+For example -s to keep existing files and -c to add new files into svn.")
+
+(defvar rails-script:destroy-params-list
+  '("-f")
+  "Add parameters to script/destroy.
+For example -c to remove files from svn.")
+
+(defvar rails-script:buffer-name "*Rails Script Output*")
+(defvar rails-script:running-script-name nil
+  "Curently running the script name")
+
+;; output-mode
+
+(defconst rails-script:output-mode-font-lock-ketwords
+  (list
+   '(" \\(rm\\|rmdir\\) "                  1 font-lock-warning-face)
+   '(" \\(missing\\|notempty\\|exists\\) " 1 font-lock-constant-face)
+   '(" \\(create\\|dependency\\) "         1 font-lock-function-name-face)))
+
+(defconst rails-script:output-mode-link-regexp
+  " \\(create\\) + \\([^ ]+\\.\\w+\\)")
+
+(defvar rails-script:popup-buffer-after-stop-if-success t)
+(defvar rails-script:output-mode-ret-value nil)
+(defvar rails-script:output-mode-after-stop-hook nil)
+
+(defun rails-script:output-mode-make-links (start end len)
+  (save-excursion
+    (let ((buffer-read-only nil))
+      (goto-char start)
+      (while (re-search-forward rails-script:output-mode-link-regexp end t)
+        (make-button (match-beginning 2) (match-end 2)
+                     :type 'rails-button
+                     :rails:file-name (match-string 2))))))
+
+(defun rails-script:output-mode-popup-buffer ()
+  (let* ((ret-val rails-script:output-mode-ret-value)
+         (ret-val (if ret-val ret-val 0))
+         (popup-if-success rails-script:popup-buffer-after-stop-if-success))
+    (when (and (if popup-if-success t (not (zerop ret-val)))
+               (not (get-buffer-process rails-script:buffer-name))
+               (not (buffer-visible-p rails-script:buffer-name)))
+      (display-buffer rails-script:buffer-name t))
+    (let ((win (get-buffer-window-list rails-script:buffer-name)))
+      (when win
+        (mapcar #'(lambda(w)(set-window-point w 0)) win)
+        (shrink-window-if-larger-than-buffer
+         (get-buffer-window rails-script:buffer-name))))))
+
+(defun rails-script:output-mode-push-first-button ()
+  (let (file-name)
+    (with-current-buffer (get-buffer rails-script:buffer-name)
+      (let ((button (next-button 1)))
+        (when button
+          (setq file-name (button-get button :rails:file-name)))))
+    (when file-name
+      (rails-core:find-file-if-exist file-name))))
+
+(define-derived-mode rails-script:output-mode fundamental-mode "Rails Script Output"
+  "Major mode to Rails Script Output."
+  (set (make-local-variable 'font-lock-keywords-only) t)
+  (set (make-local-variable 'font-lock-defaults)
+       '((rails-script:output-mode-font-lock-ketwords) nil t))
+  (buffer-disable-undo)
+  (rails-script:output-mode-make-links (point-min) (point-max) (point-max))
+  (setq buffer-read-only t)
+  (set (make-local-variable 'rails-script:popup-buffer-after-stop-if-success) t)
+  (set (make-local-variable 'scroll-margin) 0)
+  (set (make-local-variable 'scroll-preserve-screen-position) nil)
+  (make-local-hook 'rails-script:output-mode-after-stop-hook)
+  (add-hook 'rails-script:output-mode-after-stop-hook 'rails-script:output-mode-popup-buffer t t)
+  (add-hook 'rails-script:output-mode-after-stop-hook 'rails-script:output-mode-push-first-button t t)
+  (make-local-variable 'after-change-functions)
+  (add-hook 'after-change-functions 'rails-script:output-mode-make-links)
+  (rails-minor-mode t))
+
+(defun rails-script:running-p ()
+  (get-buffer-process rails-script:buffer-name))
+
+(defun rails-script:sentinel-proc (proc msg)
+  (let* ((name rails-script:running-script-name)
+         (ret-val (process-exit-status proc))
+         (buf (get-buffer rails-script:buffer-name))
+         (ret-message (if (zerop ret-val) "successful" "failure")))
+    (with-current-buffer buf
+      (set (make-local-variable 'rails-script:output-mode-ret-value) ret-val))
+    (when (memq (process-status proc) '(exit signal))
+      (setq rails-script:running-script-name nil
+            msg (format "%s was stopped (%s)." name ret-message)))
+    (message (replace-regexp-in-string "\n" "" msg))
+    (with-current-buffer buf
+      (run-hooks 'rails-script:output-mode-after-stop-hook))))
+
+(defun rails-script:run (command parameters &optional buffer-major-mode)
+  "Run a Rails script COMMAND with PARAMETERS with
+BUFFER-MAJOR-MODE and process-sentinel SENTINEL."
+  (unless (listp parameters)
+    (error "rails-script:run PARAMETERS must be the list"))
   (rails-core:with-root
    (root)
-   (let ((default-directory root))
-     (rails-logged-shell-command
-      (format "ruby %s %s"
-	      (format "script/%s " script)
-	      (apply #'concat
-		     (mapcar #'(lambda (str)
-				 (if str (concat str " ") ""))
-			     parameters)))
-      buffer))
-   (when message-format
-     (message message-format (capitalize (first parameters))
-	      (second parameters)))))
+   (let ((proc (rails-script:running-p)))
+     (if proc
+         (message "Only one instance rails-script allowed")
+       (let* ((default-directory root)
+              (proc (rails-cmd-proxy:start-process rails-script:buffer-name
+                                                   rails-script:buffer-name
+                                                   command
+                                                   (strings-join " " parameters))))
+         (with-current-buffer (get-buffer rails-script:buffer-name)
+           (let ((buffer-read-only nil)
+                 (win (get-buffer-window-list rails-script:buffer-name)))
+             (kill-region (point-min) (point-max)))
+           (if buffer-major-mode
+               (apply buffer-major-mode (list))
+             (rails-script:output-mode)))
+         (set-process-coding-system proc 'utf-8-dos 'utf-8-dos)
+         (set-process-sentinel proc 'rails-script:sentinel-proc)
+         (setq rails-script:running-script-name
+               (if (= 1 (length parameters))
+                   (format "%s %s" command (first parameters))
+                 (format "%s %s" (first parameters) (first (cdr parameters)))))
+         (message "Starting %s." rails-script:running-script-name))))))
 
 ;;;;;;;;;; Destroy stuff ;;;;;;;;;;
 
+(defun rails-script:run-destroy (what &rest parameters)
+  "Run the destroy script using WHAT and PARAMETERS."
+  (rails-script:run rails-ruby-command
+                    (append (list (format "script/destroy %s"  what))
+                            parameters
+                            rails-script:destroy-params-list)))
 
-(defun rails-destroy (&rest parameters)
-  "Running destroy script"
-  (rails-run-script "destroy" rails-generation-buffer-name parameters
-		    "%s %s destroyed."))
+(defun rails-script:destroy (&optional what)
+  "Run destroy WHAT"
+  (interactive (list (completing-read "What destroy? (use autocomplete): " rails-script:destroy-list)))
+  (let ((name (intern (concat "rails-script:destroy-" what))))
+    (when (fboundp name)
+      (call-interactively name))))
 
-(defun rails-destroy-controller (&optional controller-name)
-  (interactive
-   (list (completing-read "Destroy controller: " (list->alist (rails-core:controllers t)))))
-  (when (string-not-empty controller-name)
-    (rails-destroy "controller" controller-name)))
+(defmacro rails-script:gen-destroy-function (name &optional completion completion-arg)
+  (let ((func (intern (format "rails-script:destroy-%s" name)))
+        (param (intern (concat name "-name"))))
+    `(defun ,func (&optional ,param)
+       (interactive
+        (list (completing-read ,(concat "Destroy " name ": ")
+                               ,(if completion
+                                    `(list->alist
+                                      ,(if completion-arg
+                                           `(,completion ,completion-arg)
+                                         `(,completion)))
+                                  nil))))
+       (when (string-not-empty ,param)
+         (rails-script:run-destroy ,name ,param)))))
 
-(defun rails-destroy-model (&optional model-name)
-  (interactive (list (completing-read "Destroy model: " (list->alist (rails-core:models)))))
-  (when (string-not-empty model-name)
-    (rails-destroy "model" model-name)))
-
-(defun rails-destroy-scaffold (&optional scaffold-name)
-  ;; buggy
-  (interactive "MDestroy scaffold: ")
-  (when (string-not-empty scaffold-name)
-    (rails-destroy "scaffold" scaffold-name)))
-
+(rails-script:gen-destroy-function "controller" rails-core:controllers t)
+(rails-script:gen-destroy-function "model"      rails-core:models)
+(rails-script:gen-destroy-function "scaffold")
+(rails-script:gen-destroy-function "migration"  rails-core:migrations t)
+(rails-script:gen-destroy-function "mailer"     rails-core:mailers)
+(rails-script:gen-destroy-function "plugin"     rails-core:plugins)
+(rails-script:gen-destroy-function "observer"   rails-core:observers)
+(rails-script:gen-destroy-function "resource")
 
 ;;;;;;;;;; Generators stuff ;;;;;;;;;;
 
-(defun rails-generate (&rest parameters)
-  "Generate with ``parameters''"
-  (rails-run-script "generate" rails-generation-buffer-name parameters
-		    "%s %s generated.")
-                                        ;(switch-to-buffer-other-window rails-generation-buffer-name)
-  )
+(defun rails-script:run-generate (what &rest parameters)
+  "Run the generate script using WHAT and PARAMETERS."
+  (rails-script:run rails-ruby-command
+                    (append (list (format "script/generate %s" what))
+                            parameters
+                            rails-script:generate-params-list)))
 
+(defun rails-script:generate (&optional what)
+  "Run generate WHAT"
+  (interactive (list (completing-read "What generate? (use autocomplete): " rails-script:generators-list)))
+  (let ((name (intern (concat "rails-script:generate-" what))))
+    (when (fboundp name)
+      (call-interactively name))))
 
-(defun rails-generate-controller (&optional controller-name actions)
-  "Generate controller and open controller file"
+(defmacro rails-script:gen-generate-function (name &optional completion completion-arg)
+  (let ((func (intern (format "rails-script:generate-%s" name)))
+        (param (intern (concat name "-name"))))
+    `(defun ,func (&optional ,param)
+       (interactive
+        (list (completing-read ,(concat "Generate " name ": ")
+                               ,(if completion
+                                    `(list->alist
+                                      ,(if completion-arg
+                                           `(,completion ,completion-arg)
+                                         `(,completion)))
+                                  nil))))
+       (when (string-not-empty ,param)
+         (rails-script:run-generate ,name ,param)))))
+
+(defun rails-script:generate-controller (&optional controller-name actions)
+  "Generate a controller and open the controller file."
   (interactive (list
-		(completing-read "Controller name (use autocomplete) : "
-				 (list->alist (rails-core:controllers-ancestors)))
-		(read-string "Actions (or return to skip): ")))
+                (completing-read "Controller name (use autocomplete) : "
+                                 (list->alist (rails-core:controllers-ancestors)))
+                (read-string "Actions (or return to skip): ")))
   (when (string-not-empty controller-name)
-    (rails-generate "controller" controller-name actions)
-    (rails-core:find-file (rails-core:controller-file controller-name))))
+    (rails-script:run-generate "controller" controller-name actions)))
 
-(defun rails-generate-model (&optional model-name)
-  "Generate model and open model file"
-  (interactive
-   (list (completing-read "Model name: " (list->alist (rails-core:models-ancestors)))))
-  (when (string-not-empty model-name)
-    (rails-generate "model" model-name)
-    (rails-core:find-file (rails-core:model-file model-name))))
-
-
-(defun rails-generate-scaffold (&optional model-name controller-name actions)
-  "Generate scaffold and open controller file"
+(defun rails-script:generate-scaffold (&optional model-name controller-name actions)
+  "Generate a scaffold and open the controller file."
   (interactive
    "MModel name: \nMController (or return to skip): \nMActions (or return to skip): ")
   (when (string-not-empty model-name)
     (if (string-not-empty controller-name)
-	(progn
-	  (rails-generate "scaffold" model-name controller-name actions)
-	  (rails-core:find-file (rails-core:controller-file controller-name)))
-      (progn
-	(rails-generate "scaffold" model-name)
-	(rails-core:find-file (rails-core:controller-file model-name))))))
+        (rails-script:run-generate "scaffold" model-name controller-name actions)
+      (rails-script:run-generate "scaffold" model-name))))
 
-(defun rails-generate-migration (migration-name)
-  "Generate new migration and open migration file"
-  (interactive "MMigration name: ")
-  (when (string-not-empty migration-name)
-    (rails-generate "migration" migration-name)
-    (rails-core:find-file
-     (save-excursion
-       (set-buffer rails-generation-buffer-name)
-       (goto-line 2)
-       (search-forward-regexp "\\(db/migrate/[0-9a-z_]+.rb\\)")
-       (match-string 1)))))
+(rails-script:gen-generate-function "model"     rails-core:models-ancestors)
+(rails-script:gen-generate-function "migration")
+(rails-script:gen-generate-function "plugin")
+(rails-script:gen-generate-function "mailer")
+(rails-script:gen-generate-function "observer")
+(rails-script:gen-generate-function "resource")
 
 ;;;;;;;;;; Rails create project ;;;;;;;;;;
 
-(defun rails-create-project (dir)
-  "Create new project in ``dir'' directory"
-  (interactive "FNew project directory: ")
-  (shell-command (concat "rails " dir)
-		 rails-generation-buffer-name)
-  (flet ((rails-core:root () (concat dir "/") ))
-    (rails-log-add
-     (format "\nCreating project %s\n%s"
-	     dir (buffer-string-by-name rails-generation-buffer-name))))
-  (find-file dir))
-
+(defun rails-script:create-project (dir)
+  "Create a new project in a directory named DIR."
+  (interactive "FNew Rails project directory: ")
+  (make-directory dir t)
+  (let ((default-directory (concat (expand-file-name dir) "/")))
+    (flet ((rails-core:root () default-directory))
+      (rails-script:run "rails" (list "--skip" (rails-core:root))))))
 
 ;;;;;;;;;; Shells ;;;;;;;;;;
 
-(defun run-ruby-in-buffer (cmd buf)
-  "Run CMD as ruby process in BUF if BUF not exists"
-  (let ((abuf (concat "*" buf "*")))
-    (if (not (comint-check-proc abuf))
-	(set-buffer (make-comint buf cmd)))
-    (pop-to-buffer abuf)
-    (inferior-ruby-mode)))
-
-(defun rails-interactive-buffer-name (name)
-  "Return name of buffer  *rails-<project-name>-<name>*"
-  (format "rails-%s-%s" (rails-core:project-name) name))
-
-(defun rails-run-interactive (name script)
-  "Run interactive shell with script in buffer
-   *rails-<project-name>-<name>*"
+(defun rails-script:run-interactive (name script)
+  "Run an interactive shell with SCRIPT in a buffer named
+*rails-<project-name>-<name>*."
   (rails-core:with-root
    (root)
    (run-ruby-in-buffer (rails-core:file script)
-		       (rails-interactive-buffer-name name))
+                       (format "rails-%s-%s" (rails-core:project-name) name))
    (rails-minor-mode t)))
 
-(defun rails-run-console ()
-  "Run script/console"
+(defun rails-script:console ()
+  "Run script/console."
   (interactive)
-  (rails-run-interactive "console" "script/console"))
+  (rails-script:run-interactive "console" "script/console"))
 
-(defun rails-run-breakpointer ()
-  "Run script/breakpointer"
+(defun rails-script:breakpointer ()
+  "Run script/breakpointer."
   (interactive)
-  (rails-run-interactive "breakpointer" "script/breakpointer"))
-
-
-;;;; Rake ;;;;
-
-(defun rails-rake-create-cache (file-name)
-  "Create cache file from rake --help output"
-  (write-string-to-file file-name
-   (prin1-to-string
-    (loop for str in (split-string (shell-command-to-string "rake --tasks") "\n")
-          for task = (when (string-not-empty str)
-                       (string-match "^rake \\([^ ]*\\).*# \\(.*\\)" str)
-                       (match-string 1 str))
-          when task collect task))))
-
-(defun rails-rake-tasks ()
-  "Return all task to main Rails Rakefile"
-  (rails-core:in-root
-   (let ((cache-file (rails-core:file ".rake-tasks-cache")))
-     (unless (file-exists-p cache-file)
-       (rails-rake-create-cache cache-file))
-     (read-from-file cache-file))))
-
-(defun rails-rake (&optional task)      
-  "Run Rake task in Rails root"
-  (interactive (list (completing-read "Rake task: " (list->alist (rails-rake-tasks)))))
-  (rails-core:in-root
-   (shell-command (concat "rake " task) "*Rails Rake Output*" "*Rails Rake Errors*" )))
+  (rails-script:run-interactive "breakpointer" "script/breakpointer"))
 
 (provide 'rails-scripts)

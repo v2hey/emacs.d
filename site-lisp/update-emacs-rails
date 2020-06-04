@@ -1,0 +1,11 @@
+#!/bin/sh -e
+
+if [ -d emacs-rails-svn/.svn ]; then
+  exec svn up emacs-rails-svn
+fi
+
+if [ -d emacs-rails-svn ]; then
+  mv emacs-rails-svn emacs-rails-svn-orig
+fi
+svn co svn://rubyforge.org/var/svn/emacs-rails/trunk emacs-rails-svn
+rm -rf emacs-rails-svn-orig
