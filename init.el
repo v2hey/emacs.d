@@ -6,6 +6,7 @@
     (let* ((my-lisp-dir "~/.emacs.d/site-lisp/")
            (default-directory my-lisp-dir))
       (progn
+        ;; 将 "~/.emacs.d/site-lisp/" 置于 load-path 最前面
         (setq load-path (cons my-lisp-dir load-path))
         (normal-top-level-add-subdirs-to-load-path))))
 
@@ -257,6 +258,7 @@
 
 (require 'which-func)
 (add-to-list 'which-func-modes 'ruby-mode)
+
 (setq imenu-auto-rescan t)       ; ensure function names auto-refresh
 (setq imenu-max-item-length 200) ; ensure function names are not truncated
 (defun ruby-execute-current-file ()
