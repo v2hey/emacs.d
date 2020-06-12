@@ -123,7 +123,7 @@
 (add-auto-mode 'snippet-mode "\\.yasnippet\\'")
 
 ;; python
-(add-interpreter-mode 'python-mode "python")
+(add-interpreter-mode 'python-mode "python3")
 
 ;; roblox studio
 (add-auto-mode 'roblox-mode "\\.rbxlx\\'")
