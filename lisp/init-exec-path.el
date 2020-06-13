@@ -1,6 +1,7 @@
 ;; -*- coding: utf-8; lexical-binding: t; -*-
 ;; use `cache-path-from-shell` to cache this, save startup time
 ;; https://github.com/manateelazycat/cache-path-from-shell
+;; https://emacs-china.org/t/exec-path-from-shell/2515/13
 
 (with-eval-after-load 'exec-path-from-shell
   (dolist (var '("SSH_AUTH_SOCK" "SSH_AGENT_PID" "GPG_AGENT_INFO"))
