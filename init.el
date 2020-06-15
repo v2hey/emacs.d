@@ -118,7 +118,7 @@
   (require-init 'init-javascript t)
   (require-init 'init-org t)
   (require-init 'init-css t)
-  (require-init 'init-python t)
+  ;; (require-init 'init-python t)
   (require-init 'init-lisp t)
   (require-init 'init-elisp t)
   (require-init 'init-yasnippet t)
