@@ -1076,7 +1076,6 @@ Including indent-buffer, which should not be called automatically on save."
     (when (and html-text
                (not (string-match "404" html-text))
                (string-match regexp html-text))
-      (message "object=%s" (concat "https://dictionary.cambridge.org" (match-string 1 html-text)))
       (concat "https://dictionary.cambridge.org" (match-string 1 html-text)))))
 
 (defun my-pronounce-word (&optional word)
