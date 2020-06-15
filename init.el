@@ -67,7 +67,10 @@
 
 (defun require-init (pkg &optional maybe-disabled)
   "Load PKG if MAYBE-DISABLED is nil or it's nil but start up in normal slowly."
+  ;; (message "********** in require-init, pkg: %s" pkg)
+  ;; (message "maybe-disabled: %s, (my-vc-merge-p): %s" maybe-disabled (my-vc-merge-p))
   (when (or (not maybe-disabled) (not (my-vc-merge-p)))
+    ;; (message "*********init..... load pkg: %s" pkg)
     (load (file-truename (format "%s/%s" my-lisp-dir pkg)) t t)))
 
 (defun local-require (pkg)
