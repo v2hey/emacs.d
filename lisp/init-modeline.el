@@ -7,7 +7,7 @@
 (setq-default mode-line-format
   (list
     ;; the buffer name; the file name as a tool tip
-    '(:eval (propertize "%b " 'face nil
+    '(:eval (propertize " %b " 'face nil
         'help-echo (buffer-file-name)))
 
     ;; line and column
