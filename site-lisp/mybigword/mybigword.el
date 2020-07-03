@@ -4,7 +4,7 @@
 ;;
 ;; Author: Chen Bin <chenbin DOT sh AT gmail.com>
 ;; URL: https://github.com/redguardtoo/mybigword
-;; Version: 0.0.6
+;; Version: 0.0.7
 ;; Keywords: convenience
 ;; Package-Requires: ((emacs "25.1"))
 ;;
@@ -55,13 +55,8 @@
 ;; Customize `mybigword-excluded-words' or `mybigword-personal-excluded-words' to
 ;; exclude words.
 ;;
-<<<<<<< HEAD
-<<<<<<< HEAD
 ;; Customize `mybigword-default-format-function' to format the word for display.
 ;; Customize `mybigword-hide-word-function' to hide word for display
-=======
-=======
->>>>>>> b325a2b6635a99bf377ba18eb8af89d018c8ecbe
 ;; Tips,
 ;;
 ;;   1. Customize `mybigword-default-format-function' to format the word for display.
@@ -73,10 +68,6 @@
 ;;     (let* ((mybigword-default-format-function 'mybigword-format-with-dictionary))
 ;;       (mybigword-show-big-words-from-current-buffer))
 ;;
-<<<<<<< HEAD
-;;   2. Parse the *.srt to play the video containing the word in org file
-;;   Make sure the org tree node has the property =SRT_PATH=.
-=======
 ;;   You can also set `mybigword-default-format-header-function' to add a header before
 ;;   displaying words.
 ;;
@@ -86,7 +77,6 @@
 ;;   2. Parse the *.srt to play the video containing the word in org file
 ;;   Make sure the org tree node has the property SRT_PATH.
 ;;   Mplayer is required to play the video. See `mybigword-mplayer-program' for details.
->>>>>>> b325a2b6635a99bf377ba18eb8af89d018c8ecbe
 ;;
 ;;   Sample of org file:
 ;;    * Star Trek s06e26
@@ -95,15 +85,6 @@
 ;;      :END:
 ;;    telepathic egotist
 ;;
-<<<<<<< HEAD
-;;   Move focus over the word like "egotist". Run "M-x mybigword-play-video-of-word-at-point".
-;;   mplayer plays the corresponding video at the time the word is spoken.
-;;
-;;   Please note `mybigword-play-video-of-word-at-point' can be used in other major modes.
-;;   See `mybigword-default-video-info-function' for details.
-;;   Customize `mybigword-hide-word-function' to hide word for display
->>>>>>> 21defb4faf5013c03b07f577addecf018cbdbcbc
-=======
 ;;   Move focus over the word like "egotist".  Run "M-x mybigword-play-video-of-word-at-point".
 ;;   Then mplayer plays the corresponding video at the time the word is spoken.
 ;;
@@ -115,8 +96,6 @@
 ;;   The word's audio is downloaded from https://dictionary.cambridge.org
 ;;   The audio download url could be customized in `mybigword-default-audio-url-function'.
 ;;
->>>>>>> b325a2b6635a99bf377ba18eb8af89d018c8ecbe
-;;
 
 ;;; Code:
 
@@ -124,10 +103,7 @@
 (require 'outline)
 (require 'org)
 (require 'cl-lib)
-<<<<<<< HEAD
-=======
 (require 'url)
->>>>>>> b325a2b6635a99bf377ba18eb8af89d018c8ecbe
 
 (defgroup mybigword nil
   "Filter the words by the frequency usage of each word."
@@ -146,15 +122,15 @@ If nil, the default data is used."
   :group 'mybigword
   :type 'string)
 
-<<<<<<< HEAD
-=======
+(defcustom mybigword-video-file-regexp "\\.\\(mp4\\|avi\\|mkv\\)$"
+  :type 'string)
+
 (defcustom mybigword-download-directory nil
   "Directory to store downloaded files.
 If it's nil, ~/.emacs.d/mybigword is is used."
   :group 'mybigword
   :type 'string)
 
->>>>>>> b325a2b6635a99bf377ba18eb8af89d018c8ecbe
 (defcustom mybigword-mplayer-rewind-time 5
   "Rewind a few seconds when mplayer playing video."
   :group 'mybigword
@@ -214,9 +190,7 @@ If it's nil, ~/.emacs.d/mybigword is is used."
 
 (defcustom mybigword-default-format-function
   'mybigword-format-word
-<<<<<<< HEAD
   "The function to format big word before displaying it."
-=======
   "The function to format big word before displaying it.
 If it's `mybigword-format-with-dictionary', the `dictionary-definition' is used."
   :group 'mybigword
@@ -229,12 +203,6 @@ If it's `mybigword-format-with-dictionary', the `dictionary-definition' is used.
   :group 'mybigword
   :type 'function)
 
-<<<<<<< HEAD
-(defcustom mybigword-default-video-info-function
-  'mybigword-org-video-info
-  "The function to play the video of the big word."
->>>>>>> 21defb4faf5013c03b07f577addecf018cbdbcbc
-=======
 (defcustom mybigword-default-format-function
   'mybigword-format-word
   "The function to format big word before displaying it.
@@ -251,7 +219,6 @@ If it's `mybigword-format-with-dictionary', the `dictionary-definition' is used.
 (defcustom mybigword-default-audio-url-function
   'mybigword-cambridge-mp3-url
   "The function to get audio download url of given word."
->>>>>>> b325a2b6635a99bf377ba18eb8af89d018c8ecbe
   :group 'mybigword
   :type 'function)
 
@@ -266,11 +233,7 @@ If it's `mybigword-format-with-dictionary', the `dictionary-definition' is used.
   :type 'boolean)
 
 (defcustom mybigword-hide-word-function nil
-<<<<<<< HEAD
-  "The function to hide a word."
-=======
   "The function to hide a word which has one parameter \" word\"."
->>>>>>> 21defb4faf5013c03b07f577addecf018cbdbcbc
   :group 'mybigword
   :type 'function)
 
@@ -359,13 +322,6 @@ If it's `mybigword-format-with-dictionary', the `dictionary-definition' is used.
       (setq rlt (match-string 1 raw-word))))
     rlt))
 
-<<<<<<< HEAD
-(defun mybigword-format-word (info)
-  "Format INFO of big word."
-  (let* ((word (car info))
-         (zipf (cdr info)))
-    (format "%s %s\n" word zipf)))
-=======
 (defun mybigword-format-word (word zipf)
   "Format WORD and ZIPF."
   (format "%s %s\n" word zipf))
@@ -376,7 +332,6 @@ If it's `mybigword-format-with-dictionary', the `dictionary-definition' is used.
   (condition-case nil
       (concat (dictionary-definition word) "\n\n\n")
     (error nil)))
->>>>>>> 21defb4faf5013c03b07f577addecf018cbdbcbc
 
 (defun mybigword-show-big-words-from-content (content file)
   "Show words whose zipf frequency is below `mybigword-upper-limit' in CONTENT.
@@ -391,12 +346,6 @@ FILE is the file path."
       (erase-buffer)
       (insert (funcall mybigword-default-format-header-function file))
       (dolist (bw big-words)
-<<<<<<< HEAD
-        (unless (or (and mybigword-hide-unknown-word (eq (cdr bw) -1))
-                    (and mybigword-hide-word-function
-                         (not (funcall mybigword-hide-word-function bw))))
-          (insert (funcall mybigword-default-format-function bw))))
-=======
         (let* (str
                (word (car bw))
                (zipf (cdr bw)))
@@ -405,7 +354,6 @@ FILE is the file path."
                            (not (funcall mybigword-hide-word-function word))))
             (when (setq str (funcall mybigword-default-format-function word zipf))
               (insert str)))))
->>>>>>> 21defb4faf5013c03b07f577addecf018cbdbcbc
       (goto-char (point-min)))
      (t
       (message "No big word is found!")))))
@@ -474,25 +422,21 @@ FILE is the file path."
   (when (and file (file-exists-p file))
     (unless mybigword-cache (mybigword-update-cache))
     (let* ((content (mybigword-read-file file)))
-<<<<<<< HEAD
-      (mybigword-show-big-words-from-content content))))
-=======
       (mybigword-show-big-words-from-content content file))))
 
 (defun mybigword-video-path (srt-path)
   "Return video path of SRT-PATH."
-  (let* (rlt
+  (let* ((rlt '(nil . 99999))
          (dir (file-name-directory srt-path))
-         (base (file-name-base srt-path)))
-    (cond
-     ((and (setq rlt (concat dir base ".mp4"))
-           (file-exists-p rlt))
-      rlt)
-     ((and (setq rlt (concat dir base ".mkv"))
-           (file-exists-p rlt))
-      rlt)
-     (t
-      nil))))
+	 (video-files (directory-files dir t mybigword-video-file-regexp))
+         (base (file-name-base srt-path))
+	 (distance-fn (if (fboundp 'string-distance) 'string-distance
+	       'org-babel-edit-distance)))
+    (dolist (v video-files)
+      (let* ((distance (funcall distance-fn (file-name-base v) base)))
+	(when (< distance (cdr rlt))
+	  (setq rlt (cons v distance)))))
+    (car rlt)))
 
 (defun mybigword-mplayer-start-time (chunks word)
   "Get video start time from CHUNKS and WORD."
@@ -536,10 +480,11 @@ FILE is the file path."
 (defun mybigword-run-mplayer (start-time video-path)
   "Use START-TIME and VIDEO-PATH to run mplayer."
   (when start-time
-    (let* ((cmd (format "%s -ss %s -osdlevel 2 %s"
+    (let* ((default-directory (file-name-directory video-path))
+	   (cmd (format "%s -ss %s -osdlevel 2 %s"
 			mybigword-mplayer-program
 			(mybigword-adjust-start-time start-time)
-			video-path)))
+			(file-name-nondirectory video-path))))
       (mybigword-async-shell-command cmd))))
 
 (defun mybigword-org-video-info (word)
@@ -572,9 +517,15 @@ The information is in current org node's \"SRT_PATH\" property."
 
 ;;;###autoload
 (defun mybigword-play-video-of-word-at-point ()
-  "Search video's subtitle (*.srt) and play the video containing the word."
+  "Search video's subtitle (*.srt) and play the video containing the word.
+The video file should be in the same directory of subtitle.
+Its file name should be similar to the subtitle's file name.
+The word is either the word at point, or selected string or string from input."
   (interactive)
-  (let* ((word (or (thing-at-point 'word) (read-string "Input a word: ")))
+  (let* ((word (or (and (region-active-p)
+                        (buffer-substring (region-beginning) (region-end)))
+                   (thing-at-point 'word)
+                   (read-string "Input a word: ")))
          info)
     (when (and word
                (setq info (funcall mybigword-default-video-info-function word)))
@@ -596,11 +547,14 @@ The information is in current org node's \"SRT_PATH\" property."
   "Program to play mp3."
   (cond
    ;; macOS
-   ((eq system-type 'darwin) "open")
+   ((eq system-type 'darwin)
+    "open")
    ;; Windows
-   ((eq system-type 'windows-nt) "start")
+   ((eq system-type 'windows-nt)
+    "start")
    ;; Use mplayer
-   (t mybigword-mplayer-program)))
+   (t
+    mybigword-mplayer-program)))
 
 (defun mybigword-get-download-directory ()
   "Get download directory."
@@ -617,8 +571,8 @@ The information is in current org node's \"SRT_PATH\" property."
   "Use cambridge dictionary to pronounce WORD."
   (setq word (downcase word))
   (let* ((cached-mp3 (file-truename (concat (mybigword-get-download-directory) word ".mp3")))
-	 (player (mybigword-play-mp3-program))
-	 online-mp3)
+         (player (mybigword-play-mp3-program))
+         online-mp3)
     (cond
      ((file-exists-p cached-mp3)
       (mybigword-async-shell-command (format "%s %s" player cached-mp3)))
