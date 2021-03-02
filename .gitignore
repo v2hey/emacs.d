@@ -1,4 +1,5 @@
 request/
+.cache
 .depend
 pyim/
 anaconda-mode/
@@ -67,3 +68,5 @@ network-security.data
 nov-places
 transient/
 elpy/
+package-quickstart.el
+.lsp-session*
