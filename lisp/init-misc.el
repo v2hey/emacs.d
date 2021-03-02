@@ -15,11 +15,6 @@
 (global-set-key (kbd "C-q") #'aya-open-line)
 ;; }}
 
-;; {{ ace-link
-(ace-link-setup-default)
-(global-set-key (kbd "M-o") 'ace-link)
-;; }}
-
 ;; open header file under cursor
 (global-set-key (kbd "C-x C-o") 'ffap)
 
@@ -67,7 +62,7 @@
 ;; {{ find-file-in-project (ffip)
 (with-eval-after-load 'find-file-in-project
   (defun my-search-git-reflog-code ()
-    (let* ((default-directory (locate-dominating-file default-directory ".git")))
+    (let* ((default-directory (my-git-root-dir)))
       (ffip-shell-command-to-string (format "git --no-pager reflog --date=short -S\"%s\" -p"
                                             (read-string "Regex: ")))))
   (push 'my-search-git-reflog-code ffip-diff-backends)
@@ -119,25 +114,13 @@
 ;; don't let the cursor go into minibuffer prompt
 (setq minibuffer-prompt-properties (quote (read-only t point-entered minibuffer-avoid-prompt face minibuffer-prompt)))
 
-;; {{ comint-mode
-(with-eval-after-load 'comint
-  ;; Don't echo passwords when communicating with interactive programs:
-  ;; Github prompt is like "Password for 'https://user@github.com/':"
-  (setq comint-password-prompt-regexp
-        (format "%s\\|^ *Password for .*: *$" comint-password-prompt-regexp))
-  (add-hook 'comint-output-filter-functions 'comint-watch-for-password-prompt))
-(defun comint-mode-hook-setup ()
-  ;; look up shell command history
-  (local-set-key (kbd "M-n") 'counsel-shell-history)
-  ;; Don't show trailing whitespace in REPL.
-  (local-set-key (kbd "M-;") 'comment-dwim))
-(add-hook 'comint-mode-hook 'comint-mode-hook-setup)
-;; }}
-
 (global-set-key (kbd "M-x") 'counsel-M-x)
 (global-set-key (kbd "C-x C-m") 'counsel-M-x)
 
-(defvar my-do-bury-compilation-buffer t
+;; hide the compilation buffer automatically is not a good idea.
+;; if compiling command is a unit test command
+;; It's better let user decide when to hide something
+(defvar my-do-bury-compilation-buffer nil
   "Hide compilation buffer if compile successfully.")
 
 (defun compilation-finish-hide-buffer-on-success (buffer str)
@@ -155,29 +138,66 @@ This function can be re-used by other major modes after compilation."
       (winner-undo)
       (message "NO COMPILATION ERRORS!"))))
 
+(defun my-normal-word-before-point-p (position n fn)
+  "A normal word exists before POSITION.  N characters before current point is checked.
+FN checks these characters belong to normal word characters."
+  (save-excursion
+    (goto-char position)
+    ;; sample N characters before POSITION
+    (let* ((rlt t)
+           (i 0))
+      (while (and (< i n) rlt)
+        (let* ((c (char-before (- (point) i))))
+          (when (not (and c (funcall fn c)))
+            (setq rlt nil)))
+        (setq i (1+ i)))
+      rlt)))
+
 (defun my-electric-pair-inhibit (char)
-  (or
-   ;; input single/double quotes at the end of word
-   (and (memq char '(34 39))
-        (char-before (1- (point)))
-        (eq (char-syntax (char-before (1- (point)))) ?w))
-   (electric-pair-conservative-inhibit char)))
+  "Customize electric pair when input CHAR."
+  (let* (rlt
+         (quote-chars '(34 39))
+         (word-fn (lambda (c)
+                    (or (and (<= ?a c) (<= c ?z))
+                        (and (<= ?A c) (<= c ?Z))
+                        (and (<= ?0 c) (<= c ?9))))))
+    (cond
+     ((and (memq major-mode '(minibuffer-inactive-mode))
+           (not (string-match "^Eval:" (buffer-string))))
+      (setq rlt t))
+
+     ;; Don't insert extra single/double quotes at the end of word
+     ;; Also @see https://github.com/redguardtoo/emacs.d/issues/892#issuecomment-740259242
+     ((and (memq (char-before (point)) quote-chars)
+           (my-normal-word-before-point-p (1- (point)) 4 word-fn))
+      (setq rlt t))
+
+     (t
+      (setq rlt (electric-pair-default-inhibit char))))
+
+    rlt))
+
+(with-eval-after-load 'flymake
+  (setq flymake-gui-warnings-enabled nil))
 
 (defun generic-prog-mode-hook-setup ()
   (when (buffer-too-big-p)
     ;; Turn off `linum-mode' when there are more than 5000 lines
     (linum-mode -1)
-    (when (should-use-minimum-resource)
+    (when (my-should-use-minimum-resource)
       (font-lock-mode -1)))
 
   (company-ispell-setup)
 
   (unless (is-buffer-file-temp)
 
-    ;; {{ spell check camel-case word
-    (my-ensure 'wucuo)
-    (wucuo-start)
-    ;; }}
+    (unless (featurep 'esup-child)
+      (my-ensure 'lazyflymake)
+      (lazyflymake-start)
+
+      (my-ensure 'wucuo)
+      (setq-local ispell-extra-args (my-detect-ispell-args t))
+      (wucuo-start))
 
     ;; @see http://xugx2007.blogspot.com.au/2007/06/benjamin-rutts-emacs-c-development-tips.html
     (setq compilation-finish-functions
@@ -185,13 +205,12 @@ This function can be re-used by other major modes after compilation."
 
     ;; fic-mode has performance issue on 5000 line C++, we can always use swiper instead
     ;; don't spell check double words
-    (setq my-flyspell-check-doublon nil)
+    (setq-local wucuo-flyspell-check-doublon nil)
     ;; enable for all programming modes
     ;; http://emacsredux.com/blog/2013/04/21/camelcase-aware-editing/
     (unless (derived-mode-p 'js2-mode)
       (subword-mode 1))
 
-    (setq-default electric-pair-inhibit-predicate 'my-electric-pair-inhibit)
     (electric-pair-mode 1)
 
     ;; eldoc, show API doc in minibuffer echo area
@@ -237,17 +256,13 @@ This function can be re-used by other major modes after compilation."
 ;; from RobinH, Time management
 (setq display-time-24hr-format t) ; the date in modeline is English too, magic!
 (setq display-time-day-and-date t)
-(display-time) ; show date in modeline
+(my-run-with-idle-timer 2 #'display-time)
 ;; }}
 
 ;;a no-op function to bind to if you want to set a keystroke to null
 (defun void () "this is a no-op" (interactive))
 
 (defalias 'list-buffers 'ibuffer)
-
-                                        ;effective emacs item 7; no scrollbar, no menubar, no toolbar
-(if (fboundp 'scroll-bar-mode) (scroll-bar-mode -1))
-(if (fboundp 'tool-bar-mode) (tool-bar-mode -1))
 
 (defun my-download-subtitles ()
   (interactive)
@@ -291,7 +306,6 @@ This function can be re-used by other major modes after compilation."
                         "\\.mp[34]$"
                         "\\.avi$"
                         "\\.wav$"
-                        "\\.pdf$"
                         "\\.docx?$"
                         "\\.xlsx?$"
                         ;; sub-titles
@@ -310,16 +324,12 @@ This function can be re-used by other major modes after compilation."
 
 (defun my-which-function ()
   "Return current function name."
-
-  (my-ensure 'imenu)
   ;; @see http://stackoverflow.com/questions/13426564/how-to-force-a-rescan-in-imenu-by-a-function
-  (let* ((imenu-create-index-function (if (my-use-tags-as-imenu-function-p)
-                                          'counsel-etags-imenu-default-create-index-function
-                                        imenu-create-index-function)))
-    ;; clean the imenu cache
-    (setq imenu--index-alist nil)
-    (imenu--make-index-alist t)
-    (which-function)))
+  ;; clean the imenu cache
+  (my-rescan-imenu-items (if (my-use-tags-as-imenu-function-p)
+                      'counsel-etags-imenu-default-create-index-function
+                    imenu-create-index-function))
+  (which-function))
 
 (defun popup-which-function ()
   "Popup which function message."
@@ -354,9 +364,6 @@ This function can be re-used by other major modes after compilation."
       (goto-line 0))))
 ;; }}
 
-(local-require 'ace-pinyin)
-(ace-pinyin-global-mode +1)
-
 ;; {{ avy, jump between texts, like easymotion in vim
 ;; @see http://emacsredux.com/blog/2015/07/19/ace-jump-mode-is-dead-long-live-avy/ for more tips
 ;; dired
@@ -380,56 +387,11 @@ This function can be re-used by other major modes after compilation."
 ;; ANSI-escape coloring in compilation-mode
 ;; {{ http://stackoverflow.com/questions/13397737/ansi-coloring-in-compilation-mode
 (ignore-errors
-  (require 'ansi-color)
   (defun my-colorize-compilation-buffer ()
     (when (eq major-mode 'compilation-mode)
+      (my-ensure 'ansi-color)
       (ansi-color-apply-on-region compilation-filter-start (point-max))))
   (add-hook 'compilation-filter-hook 'my-colorize-compilation-buffer))
-;; }}
-
-;; @see http://emacs.stackexchange.com/questions/14129/which-keyboard-shortcut-to-use-for-navigating-out-of-a-string
-(defun font-face-is-similar (f1 f2)
-  "Font face F1 and F2 are similar or same."
-  ;; (message "f1=%s f2=%s" f1 f2)
-  ;; in emacs-lisp-mode, the '^' from "^abde" has list of faces:
-  ;;   (font-lock-negation-char-face font-lock-string-face)
-  (if (listp f1) (setq f1 (nth 1 f1)))
-  (if (listp f2) (setq f2 (nth 1 f2)))
-
-  (or (eq f1 f2)
-      ;; C++ comment has different font face for limit and content
-      ;; f1 or f2 could be a function object because of rainbow mode
-      (and (string-match "-comment-" (format "%s" f1))
-           (string-match "-comment-" (format "%s" f2)))))
-
-(defun font-face-at-point-similar-p (font-face-list)
-  "Test if font face at point is similar to any font in FONT-FACE-LIST."
-  (let* ((f (get-text-property (point) 'face))
-         rlt)
-    (dolist (ff font-face-list)
-      (if (font-face-is-similar f ff) (setq rlt t)))
-    rlt))
-
-;; {{
-(defun goto-edge-by-comparing-font-face (&optional step)
-  "Goto either the begin or end of string/comment/whatever.
-If step is -1, go backward."
-  (interactive "P")
-  (let* ((cf (get-text-property (point) 'face))
-         (p (point))
-         rlt
-         found
-         end)
-    (unless step (setq step 1)) ;default value
-    (setq end (if (> step 0) (point-max) (point-min)))
-    (while (and (not found) (not (= end p)))
-      (if (not (font-face-is-similar (get-text-property p 'face) cf))
-          (setq found t)
-        (setq p (+ p step))))
-    (if found (setq rlt (- p step))
-      (setq rlt p))
-    ;; (message "rlt=%s found=%s" rlt found)
-    (goto-char rlt)))
 ;; }}
 
 (defun my-minibuffer-setup-hook ()
@@ -440,7 +402,7 @@ If step is -1, go backward."
 
 (defun my-minibuffer-exit-hook ()
   ;; evil-mode also use minibuf
-  (setq gc-cons-threshold best-gc-cons-threshold))
+  (setq gc-cons-threshold 67108864))
 
 ;; @see http://bling.github.io/blog/2016/01/18/why-are-you-changing-gc-cons-threshold/
 (add-hook 'minibuffer-setup-hook #'my-minibuffer-setup-hook)
@@ -571,7 +533,6 @@ If no region is selected, `kill-ring' or clipboard is used instead."
   "Extract package list from package.json."
   (interactive)
   (let* ((str (my-use-selected-string-or-ask)))
-    (message "my-select-cliphist-item called => %s" str)
     (setq str (replace-regexp-in-string ":.*$\\|\"" "" str))
     ;; join lines
     (setq str (replace-regexp-in-string "[\r\n \t]+" " " str))
@@ -600,12 +561,22 @@ If no region is selected, `kill-ring' or clipboard is used instead."
   (setq indent-tabs-mode (not indent-tabs-mode))
   (message "indent-tabs-mode=%s" indent-tabs-mode))
 
+(defvar my-auto-save-exclude-major-mode-list
+  '(message-mode)
+  "The major modes where auto-save is disabled.")
+
 ;; {{ auto-save.el
-(local-require 'auto-save)
-(add-to-list 'auto-save-exclude 'file-too-big-p t)
-(setq auto-save-idle 2) ; 2 seconds
-(auto-save-enable)
-(setq auto-save-slient t)
+(defun my-check-major-mode-for-auto-save (file)
+  "Check current major mode of FILE for auto save."
+  (ignore file)
+  (memq major-mode my-auto-save-exclude-major-mode-list))
+
+(with-eval-after-load 'auto-save
+  (push 'my-file-too-big-p auto-save-exclude)
+  (push 'my-check-major-mode-for-auto-save auto-save-exclude)
+  (setq auto-save-idle 2) ; 2 seconds
+  (setq auto-save-slient t))
+(my-run-with-idle-timer 4 #'auto-save-enable)
 ;; }}
 
 ;; {{ csv
@@ -739,8 +710,7 @@ If no region is selected, `kill-ring' or clipboard is used instead."
 ;; }}
 
 ;; {{
-(local-require 'typewriter-mode)
-(defun toggle-typewriter ()
+(defun my-toggle-typewriter ()
   "Turn on/off typewriter."
   (interactive)
   (if (bound-and-true-p typewriter-mode)
@@ -778,6 +748,13 @@ If no region is selected, `kill-ring' or clipboard is used instead."
   (define-key grep-mode-map
     (kbd "C-x C-q") 'wgrep-change-to-wgrep-mode))
 
+(defun my-wgrep-mark-deletion-hack (&optional arg)
+  "After mark a line for deletion, move to next line.
+ARG is ignored."
+  (ignore arg)
+  (forward-line))
+(advice-add 'wgrep-mark-deletion :after #'my-wgrep-mark-deletion-hack)
+
 ;; wgrep and rgrep, inspired by http://oremacs.com/2015/01/27/my-refactoring-workflow/
 (with-eval-after-load 'wgrep
   '(define-key grep-mode-map
@@ -795,6 +772,7 @@ If no region is selected, `kill-ring' or clipboard is used instead."
                                 file-name-history
                                 search-ring
                                 regexp-search-ring))
+(setq session-save-file-coding-system 'utf-8)
 (add-hook 'after-init-hook 'session-initialize)
 ;; }}
 
@@ -871,9 +849,9 @@ If the shell is already opened in some buffer, switch to that buffer."
   ;; Although win64 is fine. It still slows down generic performance.
   ;; @see https://stackoverflow.com/questions/3589535/why-reload-notification-slow-in-emacs-when-files-are-modified-externally
   ;; So no auto-revert-mode on Windows/Cygwin
-  (global-auto-revert-mode)
   (setq global-auto-revert-non-file-buffers t
-        auto-revert-verbose nil))
+        auto-revert-verbose nil)
+  (my-run-with-idle-timer 4 #'global-auto-revert-mode))
 
 ;;----------------------------------------------------------------------------
 ;; Don't disable narrowing commands
@@ -889,7 +867,7 @@ If the shell is already opened in some buffer, switch to that buffer."
           (concat (getenv "USER") " $ "))))
 
 ;; I'm in Australia now, so I set the locale to "en_AU"
-(defun insert-date (prefix)
+(defun my-insert-date (prefix)
   "Insert the current date. With prefix-argument, use ISO format. With
    two prefix arguments, write out the day and month name."
   (interactive "P")
@@ -1007,8 +985,7 @@ version control automatically."
 (put 'upcase-region 'disabled nil)
 
 ;; midnight mode purges buffers which haven't been displayed in 3 days
-(require 'midnight)
-(setq midnight-mode t)
+(my-run-with-idle-timer 4 #'midnight-mode)
 
 (defun cleanup-buffer-safe ()
   "Perform a bunch of safe operations on the whitespace content of a buffer.
@@ -1017,13 +994,6 @@ might be bad."
   (interactive)
   (untabify (point-min) (point-max))
   (delete-trailing-whitespace))
-
-(defun cleanup-buffer ()
-  "Perform a bunch of operations on the whitespace content of a buffer.
-Including indent-buffer, which should not be called automatically on save."
-  (interactive)
-  (cleanup-buffer-safe)
-  (indent-region (point-min) (point-max)))
 
 ;; {{ easygpg setup
 ;; @see http://www.emacswiki.org/emacs/EasyPG#toc4
@@ -1045,91 +1015,36 @@ Including indent-buffer, which should not be called automatically on save."
     (setq epa-pinentry-mode 'loopback)))
 ;; }}
 
-;; {{ show current function name in `mode-line'
-(defun my-which-func-update-hack (orig-func &rest args)
-  "`which-function-mode' scanning makes Emacs unresponsive in big buffer."
-  (unless (buffer-too-big-p) (apply orig-func args)))
-(advice-add 'which-func-update :around #'my-which-func-update-hack)
-(with-eval-after-load 'which-function
-  (add-to-list 'which-func-modes 'org-mode))
-(which-function-mode 1)
-;; }}
-
 ;; {{ pomodoro
 (with-eval-after-load 'pomodoro
   (setq pomodoro-play-sounds nil) ; *.wav is not installed
   (setq pomodoro-break-time 2)
   (setq pomodoro-long-break-time 5)
-  (setq pomodoro-work-time 15))
-
-(unless (featurep 'pomodoro)
-  (require 'pomodoro)
-  (pomodoro-add-to-mode-line))
-;; }}
-
-;; {{ pronunciation
-(defun my-extract-word-mp3 (url)
-  "Extract mp3 from URL's response."
-  (let* ((html-text (with-current-buffer
-                        (url-retrieve-synchronously url) (buffer-string)))
-         (regexp "<source type=\"audio/mpeg\" src=\"\\([^\"]+\\)"))
-    (when (and html-text
-               (not (string-match "404" html-text))
-               (string-match regexp html-text))
-      (concat "https://dictionary.cambridge.org" (match-string 1 html-text)))))
-
-(defun my-pronounce-word (&optional word)
-  "Use cambridge dictionary to pronounce WORD."
-  (interactive "sWord: ")
-  (my-ensure 'url)
-  (if word (setq word (downcase word)))
-  (let* ((url (format "https://dictionary.cambridge.org/pronunciation/english/%s" word))
-         (cached-mp3 (file-truename (concat my-emacs-d (format "misc/%s.mp3" word))))
-         (player (if (not *is-a-mac*) (my-guess-mplayer-path) "open"))
-         online-mp3)
-    (cond
-     ((file-exists-p cached-mp3)
-      (my-async-shell-command (format "%s %s" player cached-mp3)))
-     ((setq online-mp3 (my-extract-word-mp3 url))
-      (url-copy-file online-mp3 cached-mp3)
-      (my-async-shell-command (format "%s %s" player cached-mp3)))
-     (t
-      (message "Sorry, can't find pronunciation for \"%s\"" word)))))
-
-(defun my-pronounce-current-word (&optional user-input-p)
-  "Pronounce current word.
-If USER-INPUT-P is t, user need input the word."
-  (interactive "P")
-  (when (memq major-mode '(nov-mode))
-    ;; go to end of word to workaround `nov-mode' bug
-    (forward-word)
-    (forward-char -1))
-  (let* ((word (if user-input-p (read-string "Word: ")
-                 (thing-at-point 'word))))
-    (my-pronounce-word word)))
-;; }}
+  (setq pomodoro-work-time 15)
+  ;; Instead of calling `pomodoro-add-to-mode-line`
+  (push '(pomodoro-mode-line-string pomodoro-mode-line-string) mode-line-format))
 
 ;; {{ epub setup
 (defun nov-mode-hook-setup ()
-  (local-set-key (kbd "d") (lambda ()
-                             (interactive)
-                             (when (memq major-mode '(nov-mode))
-                               ;; go to end of word to workaround `nov-mode' bug
-                               (forward-word)
-                               (forward-char -1))
-                             (sdcv-search-input (thing-at-point 'word))))
-  (local-set-key (kbd "w") 'my-pronounce-current-word)
+  "Set up of `nov-mode'."
+  (local-set-key (kbd "d")
+		 (lambda ()
+		   (interactive)
+		   ;; go to end of word to workaround `nov-mode' bug
+		   (forward-word)
+		   (forward-char -1)
+		   (sdcv-search-input (thing-at-point 'word))))
+  (local-set-key (kbd "w") 'mybigword-pronounce-word)
   (local-set-key (kbd ";") 'avy-goto-char-2))
 (add-hook 'nov-mode-hook 'nov-mode-hook-setup)
 ;; }}
 
 ;; {{ octave
-(add-hook 'octave-mode-hook
-          (lambda ()
-            (abbrev-mode 1)
-            (auto-fill-mode 1)
-            (if (eq window-system 'x)
-                (font-lock-mode 1))))
+(defun octave-mode-hook-setup ()
+  "Set up of `octave-mode'."
+  (setq-local comment-start "%")
+  (setq-local comment-add 0))
+(add-hook 'octave-mode-hook 'octave-mode-hook-setup)
 ;; }}
 
 ;; {{ wgrep setup
@@ -1139,40 +1054,44 @@ If USER-INPUT-P is t, user need input the word."
   (setq wgrep-too-many-file-length 2024))
 ;; }}
 
-;; {{ edit-server
-(defun edit-server-start-hook-setup ()
-  "Some web sites actually pass html to edit server."
-  (let* ((url (buffer-name)))
-    (cond
-     ((string-match "github.com" url)
-      (markdown-mode))
-     ((string-match "zhihu.com" url)
-      ;; `web-mode' plus `sgml-pretty-print' get best result
-      (web-mode)
-      ;; format html
-      (my-ensure 'sgml)
-      (sgml-pretty-print (point-min) (point-max))
-      (goto-char (point-min))
-      ;; insert text after removing br tag, that's required by zhihu.com
-      ;; unfortunately, after submit comment once, page need be refreshed.
-      (replace-regexp "<br data-text=\"true\">" "")))))
-
-(add-hook 'edit-server-start-hook 'edit-server-start-hook-setup)
-(when (require 'edit-server nil t)
-  (setq edit-server-new-frame nil)
-  (edit-server-start))
-;; }}
+(defun my-browse-file (file)
+  "Browse FILE as url using `browse-url'."
+  (when (and file (file-exists-p file))
+    (browse-url-generic (concat "file://" file))))
 
 (defun my-browse-current-file ()
-  "Open the current file as a URL using `browse-url'."
+  "Browse current file."
   (interactive)
-  (browse-url-generic (concat "file://" (buffer-file-name))))
+  (my-browse-file buffer-file-name))
+
+(defun my-browse-current-file-as-html ()
+  "Browse current file as html."
+  (interactive)
+  (cond
+   ((or (not buffer-file-name)
+        (not (file-exists-p buffer-file-name))
+        (not (string-match-p "html?$" buffer-file-name)))
+    (let* ((file (make-temp-file "my-browse-file-" nil ".html")))
+      (my-write-to-file (format "<html><body>%s</body></html>" (buffer-string)) file)
+      (my-browse-file file)
+      (my-run-with-idle-timer 4 (lambda (delete-file file)))))
+   (t
+    (my-browse-file buffer-file-name))))
 
 ;; {{ which-key-mode
-(local-require 'which-key)
-(setq which-key-allow-imprecise-window-fit t) ; performance
-(setq which-key-separator ":")
-(which-key-mode 1)
+(defvar my-show-which-key-when-press-C-h nil)
+(with-eval-after-load 'which-key
+  (setq which-key-allow-imprecise-window-fit t) ; performance
+  (setq which-key-separator ":")
+  (setq which-key-idle-delay 1.5)
+  (when my-show-which-key-when-press-C-h
+    ;; @see https://twitter.com/bartuka_/status/1327375348959498240?s=20
+    ;; Therefore, the which-key pane only appears if I hit C-h explicitly.
+    ;; C-c <C-h> for example - by Wanderson Ferreira
+    (setq which-key-idle-delay 10000)
+    (setq which-key-show-early-on-C-h t))
+  (setq which-key-idle-secondary-delay 0.05))
+(my-run-with-idle-timer 2 #'which-key-mode)
 ;; }}
 
 ;; {{ Answer Yes/No programmically when asked by `y-or-n-p'
@@ -1229,10 +1148,10 @@ See https://github.com/RafayGhafoor/Subscene-Subtitle-Grabber."
       (shell-command (format "%s --dir . &" cmd-prefix))))))
 ;; }}
 
+(defvar my-sdcv-org-head-level 2)
 ;; {{ use sdcv dictionary to find big word definition
 (defun my-sdcv-format-bigword (word zipf)
   "Format WORD and ZIPF using sdcv dictionary."
-  (ignore zipf)
   (let* (rlt def)
     (local-require 'sdcv)
     ;; 2 level org format
@@ -1241,7 +1160,11 @@ See https://github.com/RafayGhafoor/Subscene-Subtitle-Grabber."
           (setq def (sdcv-search-witch-dictionary word sdcv-dictionary-complete-list))
           (setq def (replace-regexp-in-string "^-->.*" "" def))
           (setq def (replace-regexp-in-string "[\n\r][\n\r]+" "" def))
-          (setq rlt (format "** %s\n%s\n" word def)))
+          (setq rlt (format "%s %s (%s)\n%s\n"
+                            (make-string my-sdcv-org-head-level ?*)
+                            word
+                            zipf
+                            def)))
       (error nil))
     rlt))
 
@@ -1251,6 +1174,43 @@ See https://github.com/RafayGhafoor/Subscene-Subtitle-Grabber."
   (local-require 'mybigword)
   (let* ((mybigword-default-format-function 'my-sdcv-format-bigword))
     (mybigword-show-big-words-from-current-buffer)))
+;; }}
+
+;; {{ use pdf-tools to view pdf
+(when (and (display-graphic-p) *linux*)
+  (pdf-loader-install))
+;; }}
+
+;; {{ exe path
+(with-eval-after-load 'exec-path-from-shell
+  (dolist (var '("SSH_AUTH_SOCK" "SSH_AGENT_PID" "GPG_AGENT_INFO"))
+    (push var exec-path-from-shell-variables)))
+
+(when (and window-system (memq window-system '(mac ns)))
+  ;; @see https://github.com/purcell/exec-path-from-shell/issues/75
+  ;; I don't use those exec path anyway.
+  (my-run-with-idle-timer 4 #'exec-path-from-shell-initialize))
+;; }}
+
+(with-eval-after-load 'elec-pair
+  (setq electric-pair-inhibit-predicate 'my-electric-pair-inhibit))
+
+;; {{ markdown
+(defun markdown-mode-hook-setup ()
+  ;; Stolen from http://stackoverflow.com/a/26297700
+  ;; makes markdown tables saner via orgtbl-mode
+  ;; Insert org table and it will be automatically converted
+  ;; to markdown table
+  (my-ensure 'org-table)
+  (defun cleanup-org-tables ()
+    (save-excursion
+      (goto-char (point-min))
+      (while (search-forward "-+-" nil t) (replace-match "-|-"))))
+  (add-hook 'after-save-hook 'cleanup-org-tables nil 'make-it-local)
+  (orgtbl-mode 1) ; enable key bindings
+  ;; don't wrap lines because there is table in `markdown-mode'
+  (setq truncate-lines t))
+(add-hook 'markdown-mode-hook 'markdown-mode-hook-setup)
 ;; }}
 
 (provide 'init-misc)
